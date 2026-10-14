@@ -1,3 +1,4 @@
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QBrush>
@@ -76,6 +77,7 @@ struct Edge {
   QString streetName;
   bool isBridge;
   bool isMajor;
+  double baseTraffic = 1.0;
 };
 
 struct RouteStep {
@@ -101,8 +103,8 @@ struct Graph {
 
   void addEdge(int u, int v, double dist, double traffic = 1.0,
                const QString &streetName = "", bool isBridge = false, bool isMajor = true) {
-    adj[u].append({v, dist, traffic, streetName, isBridge, isMajor});
-    adj[v].append({u, dist, traffic, streetName, isBridge, isMajor});
+    adj[u].append({v, dist, traffic, streetName, isBridge, isMajor, traffic});
+    adj[v].append({u, dist, traffic, streetName, isBridge, isMajor, traffic});
   }
 
   static double travelTimeOf(double distPx, double traffic, double v0 = 40.0) {
@@ -221,6 +223,80 @@ struct Graph {
   }
 };
 
+// ==================== CÁC WIDGET GIAO DIỆN GIAO THÔNG GOOGLE MAPS ====================
+static inline const QStringList kDayNames = {"Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"};
+static inline const QStringList kDayShortNames = {"T2", "T3", "T4", "T5", "T6", "T7", "CN"};
+
+class TrafficSwitch : public QAbstractButton {
+  Q_OBJECT
+public:
+  explicit TrafficSwitch(QWidget *parent = nullptr) : QAbstractButton(parent) {
+    setCheckable(true);
+    setChecked(true);
+    setFixedSize(38, 20);
+    setCursor(Qt::PointingHandCursor);
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+
+    bool on = isChecked();
+    // Google Maps teal toggle: #00796B
+    QColor trackColor = on ? QColor(0, 121, 107) : QColor(209, 213, 219);
+    p.setPen(Qt::NoPen);
+    p.setBrush(trackColor);
+    p.drawRoundedRect(rect(), 10, 10);
+
+    // Knob: white circle with subtle shadow
+    int knobD = 16;
+    int knobY = 2;
+    int knobX = on ? (width() - knobD - 2) : 2;
+
+    p.setPen(QColor(0, 0, 0, 30));
+    p.setBrush(Qt::white);
+    p.drawEllipse(knobX, knobY, knobD, knobD);
+  }
+};
+
+class TrafficTimeScaleWidget : public QWidget {
+public:
+  explicit TrafficTimeScaleWidget(QWidget *parent = nullptr) : QWidget(parent) {
+    setFixedHeight(26);
+  }
+  void setDark(bool dark) { m_dark = dark; update(); }
+protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    QFont f("Segoe UI", 8);
+    p.setFont(f);
+    p.setPen(m_dark ? QColor(160, 165, 175) : QColor(95, 99, 104));
+
+    int margin = 7;
+    int w = width() - 2 * margin;
+
+    struct Mark { int minutes; QString label; };
+    QVector<Mark> marks = {
+      {8 * 60, "08:00"},
+      {12 * 60, "12:00"},
+      {16 * 60, "16:00"},
+      {20 * 60, "20:00"}
+    };
+
+    for (const auto &m : marks) {
+      double frac = static_cast<double>(m.minutes - 6 * 60) / (16.0 * 60.0);
+      int x = margin + static_cast<int>(frac * w);
+      p.drawLine(x, 2, x, 7);
+      QRect textRect(x - 22, 9, 44, 15);
+      p.drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, m.label);
+    }
+  }
+private:
+  bool m_dark = false;
+};
+
 // ==================== MAP VIEW (CANVAS & RENDER ĐÀ NẴNG THỰC TẾ) ====================
 class MapView : public QGraphicsView {
   Q_OBJECT
@@ -244,9 +320,6 @@ public:
     drawMap();
     resetView();
 
-    animTimer = new QTimer(this);
-    connect(animTimer, &QTimer::timeout, this, &MapView::onAnimTick);
-
     pathAnimTimer = new QTimer(this);
     connect(pathAnimTimer, &QTimer::timeout, this, &MapView::onPathAnimTick);
 
@@ -259,6 +332,11 @@ public:
     setupFloatingControls();
     setupFloatingSearchBar();
     setupFloatingRouteBanner();
+    setupFloatingTrafficWidget();
+
+    applyLiveTraffic();
+    if (trafficSimTimer)
+      trafficSimTimer->start(2500);
   }
 
   // Getters
@@ -382,15 +460,27 @@ public:
 
   void setTrafficLayerVisible(bool b) {
     showTrafficLayer = b;
+    if (trafficLinesGroup)
+      trafficLinesGroup->setVisible(b);
     if (legendGroup)
-      legendGroup->setVisible(b);
+      legendGroup->setVisible(false);
+    if (floatingTrafficSwitch && floatingTrafficSwitch->isChecked() != b) {
+      floatingTrafficSwitch->blockSignals(true);
+      floatingTrafficSwitch->setChecked(b);
+      floatingTrafficSwitch->blockSignals(false);
+    }
+    if (btnTraffic && btnTraffic->isChecked() != b) {
+      btnTraffic->blockSignals(true);
+      btnTraffic->setChecked(b);
+      btnTraffic->blockSignals(false);
+    }
     if (!startPoint.isNull() && !endPoint.isNull()) {
       recompute();
     }
     viewport()->update();
     emit trafficLayerVisibilityChanged(b);
-    emit statusMessage(b ? "🚦 Mật độ giao thông trên tuyến đường: BẬT"
-                         : "⚪ Mật độ giao thông trên tuyến đường: TẮT (hiển thị màu xanh chuẩn)");
+    emit statusMessage(b ? "🚦 Lớp giao thông Google Maps: BẬT"
+                         : "⚪ Lớp giao thông Google Maps: TẮT");
   }
 
   void toggleTrafficLayer() {
@@ -442,10 +532,18 @@ public slots:
   void setTrafficSimulation(bool enabled) {
     trafficSimEnabled = enabled;
     if (trafficSimEnabled) {
-      trafficSimTimer->start(1000);
+      if (trafficSimTimer)
+        trafficSimTimer->start(1500);
       onTrafficSimTick();
     } else {
-      trafficSimTimer->stop();
+      if (!isTypicalMode) {
+        if (trafficSimTimer)
+          trafficSimTimer->start(2500);
+        applyLiveTraffic();
+      } else {
+        if (trafficSimTimer)
+          trafficSimTimer->stop();
+      }
     }
   }
 
@@ -545,9 +643,16 @@ protected:
       floatingControlFrame->move(width() - floatingControlFrame->width() - 16,
                                  height() - floatingControlFrame->height() - 24);
     }
+    if (floatingTrafficFrame) {
+      repositionFloatingTraffic();
+    }
   }
 
   void mouseMoveEvent(QMouseEvent *e) override {
+    if ((e->pos() - mousePressPos).manhattanLength() > 6) {
+      mouseMovedSignificantly = true;
+    }
+
     currentMouseScenePos = mapToScene(e->pos());
     emit mousePosChanged(currentMouseScenePos);
 
@@ -555,10 +660,10 @@ protected:
     int oldHoverU = hoveredEdgeU;
     int oldHoverV = hoveredEdgeV;
 
-    hoveredNodeId = findNearestNode(currentMouseScenePos, 22.0);
+    hoveredNodeId = findNearestNode(currentMouseScenePos, 20.0);
     if (hoveredNodeId < 0) {
-      auto [u, v, proj] = findNearestPointOnEdge(currentMouseScenePos);
-      if (u != -1 && QLineF(currentMouseScenePos, proj).length() <= 16.0) {
+      auto [u, v, proj] = findNearestPointOnEdge(currentMouseScenePos, 14.0);
+      if (u != -1 && QLineF(currentMouseScenePos, proj).length() <= 14.0) {
         hoveredEdgeU = u;
         hoveredEdgeV = v;
       } else {
@@ -591,6 +696,9 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    mousePressPos = event->pos();
+    mouseMovedSignificantly = false;
+
     // Kiểm tra nhấp vào La Bàn (Compass) góc trên bên phải
     int vpW = viewport()->width();
     int cx = vpW - 40;
@@ -605,29 +713,43 @@ protected:
       handleRightClick(event);
       return;
     }
-    if (event->button() == Qt::LeftButton) {
-      QPointF clickPos = mapToScene(event->pos());
-      int nearestNode = findNearestNode(clickPos, 20.0);
-      if (nearestNode >= 0) {
-        setEndpointFromNode(nearestNode);
-        return;
-      }
-      auto [edgeU, edgeV, projected] = findNearestPointOnEdge(clickPos);
-      if (edgeU != -1) {
-        setEndpointFromEdge(edgeU, edgeV, projected);
-        return;
-      }
-    }
+
+    // LUÔN chuyển tiếp cho QGraphicsView để ScrollHandDrag (kéo map) hoạt động trơn tru!
     QGraphicsView::mousePressEvent(event);
   }
 
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    QGraphicsView::mouseReleaseEvent(event);
+
+    if (event->button() == Qt::LeftButton && !mouseMovedSignificantly) {
+      // Click chuột thực sự (không phải kéo bản đồ)
+      QPointF clickPos = mapToScene(event->pos());
+      int nearestNode = findNearestNode(clickPos, 18.0);
+      if (nearestNode >= 0) {
+        selectedNodeId = nearestNode;
+        selectedEdgeU = selectedEdgeV = -1;
+        setEndpointFromNode(nearestNode);
+        viewport()->update();
+        return;
+      }
+
+      auto [edgeU, edgeV, projected] = findNearestPointOnEdge(clickPos, 12.0);
+      if (edgeU != -1) {
+        selectedEdgeU = edgeU;
+        selectedEdgeV = edgeV;
+        selectedNodeId = -1;
+        setEndpointFromEdge(edgeU, edgeV, projected);
+        viewport()->update();
+        return;
+      }
+    }
+  }
+
   void mouseDoubleClickEvent(QMouseEvent *event) override {
-    if (event->button() != Qt::LeftButton)
-      return;
-    QPointF clickPos = mapToScene(event->pos());
-    int nid = findNearestNode(clickPos, 24.0);
-    if (nid >= 0)
-      setEndpointFromNode(nid);
+    if (event->button() == Qt::LeftButton) {
+      scale(1.25, 1.25);
+      viewport()->update();
+    }
   }
 
   void wheelEvent(QWheelEvent *event) override {
@@ -813,10 +935,10 @@ protected:
         street = QString("%1 ↔ %2").arg(graph.nodes[hoveredEdgeU].name, graph.nodes[hoveredEdgeV].name);
 
       QPoint viewPt = mapFromScene(currentMouseScenePos);
-      int cardW = 240;
-      int cardH = 56;
+      int cardW = 265;
+      int cardH = 76;
       int cardX = viewPt.x() + 18;
-      int cardY = viewPt.y() - 28;
+      int cardY = viewPt.y() - 38;
 
       if (cardX + cardW > vpW - 16)
         cardX = viewPt.x() - cardW - 18;
@@ -840,17 +962,36 @@ protected:
       painter->setPen(darkMode ? QColor(230, 235, 245) : QColor(32, 33, 36));
       painter->drawText(cardX + 10, cardY + 20, "🛣️ " + street);
 
-      QColor c = trafficToColor(traf);
-      painter->setBrush(c);
-      painter->drawEllipse(cardX + 12, cardY + 33, 6, 6);
+      double distPx = QLineF(graph.nodes[hoveredEdgeU].pos, graph.nodes[hoveredEdgeV].pos).length();
+      double distMeters = distPx * 5.0;
+      bool isBr = isBridgeOf(graph, hoveredEdgeU, hoveredEdgeV);
+      QString typeStr = isBr ? "🌉 Cầu vượt sông" : "Trục đường chính";
 
-      QFont sf2("Segoe UI", 8);
-      painter->setFont(sf2);
+      QFont subF("Segoe UI", 8);
+      painter->setFont(subF);
+      painter->setPen(darkMode ? QColor(170, 175, 185) : QColor(95, 99, 104));
+      painter->drawText(cardX + 10, cardY + 36, QString("%1 • Dài %2 m").arg(typeStr).arg(distMeters, 0, 'f', 0));
+
+      QColor c = trafficToColor(traf);
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(c);
+      painter->drawEllipse(cardX + 12, cardY + 47, 7, 7);
+
       painter->setPen(c);
-      QString tMsg = QString("Mật độ: %1 • Tốc độ ~%2 km/h")
+      QFont sf2("Segoe UI", 8, QFont::DemiBold);
+      painter->setFont(sf2);
+      double speed = std::max(5.0, v0 / std::max(0.1, traf * peakMul));
+      QString statusWord = (traf <= 1.25) ? "Thông thoáng" : ((traf <= 1.7) ? "Đông vừa" : ((traf <= 2.2) ? "Ùn ứ" : "Tắc đường"));
+      QString tMsg = QString("Mật độ %1x (%2) • ~%3 km/h")
                          .arg(traf * peakMul, 0, 'f', 1)
-                         .arg(std::max(5.0, v0 / std::max(0.1, traf * peakMul)), 0, 'f', 0);
-      painter->drawText(cardX + 24, cardY + 40, tMsg);
+                         .arg(statusWord)
+                         .arg(speed, 0, 'f', 0);
+      painter->drawText(cardX + 24, cardY + 54, tMsg);
+
+      painter->setPen(darkMode ? QColor(140, 145, 155) : QColor(128, 134, 139));
+      QFont hf("Segoe UI", 7);
+      painter->setFont(hf);
+      painter->drawText(cardX + 10, cardY + 68, "👉 Click chọn điểm • Chuột phải chỉnh mật độ");
     }
 
     painter->restore();
@@ -881,6 +1022,10 @@ private:
 
   int hoveredNodeId = -1;
   int hoveredEdgeU = -1, hoveredEdgeV = -1;
+  int selectedNodeId = -1;
+  int selectedEdgeU = -1, selectedEdgeV = -1;
+  QPoint mousePressPos;
+  bool mouseMovedSignificantly = false;
   QPointF currentMouseScenePos;
 
   QVector<RouteStep> lastSteps;
@@ -913,10 +1058,7 @@ private:
   QColor roadColor = QColor(196, 190, 176); // Road outline casing
   QColor textColor = QColor(60, 64, 67);   // Label text
 
-  QTimer *animTimer = nullptr;
   QGraphicsItemGroup *mover = nullptr;
-  QVector<QPointF> animPath;
-  int animIndex = 0;
 
   // Smooth vehicle simulation
   QTimer *smoothAnimTimer = nullptr;
@@ -954,6 +1096,28 @@ private:
   QLabel *bannerDistLabel = nullptr;
   QLabel *bannerDetailLabel = nullptr;
   QPushButton *bannerSimBtn = nullptr;
+
+  // Floating Google Maps Traffic Widget
+  QFrame *floatingTrafficFrame = nullptr;
+  QToolButton *trafficModeBtn = nullptr;
+  TrafficSwitch *floatingTrafficSwitch = nullptr;
+  QWidget *typicalTrafficPanel = nullptr;
+  QLabel *typicalTimeLabel = nullptr;
+  QSlider *typicalTimeSlider = nullptr;
+  TrafficTimeScaleWidget *typicalScaleWidget = nullptr;
+  QVector<QPushButton *> dayButtons;
+  int selectedDayIndex = 0; // 0 = T2 (Thứ Hai)
+  int typicalMinuteOfDay = 9 * 60; // 09:00
+  bool isTypicalMode = false;
+
+  struct TrafficOverlayLine {
+    QGraphicsLineItem *line = nullptr;
+    int u = -1;
+    int v = -1;
+    bool isMajor = false;
+  };
+  QGraphicsItemGroup *trafficLinesGroup = nullptr;
+  QVector<TrafficOverlayLine> trafficOverlayLines;
 
   void setupFloatingControls() {
     floatingControlFrame = new QFrame(this);
@@ -1007,6 +1171,11 @@ private:
         btnTraffic->blockSignals(true);
         btnTraffic->setChecked(v);
         btnTraffic->blockSignals(false);
+      }
+      if (floatingTrafficSwitch && floatingTrafficSwitch->isChecked() != v) {
+        floatingTrafficSwitch->blockSignals(true);
+        floatingTrafficSwitch->setChecked(v);
+        floatingTrafficSwitch->blockSignals(false);
       }
     });
 
@@ -1313,6 +1482,548 @@ private:
     floatingRouteBanner->show();
   }
 
+  void setupFloatingTrafficWidget() {
+    floatingTrafficFrame = new QFrame(this);
+    floatingTrafficFrame->setObjectName("floatingTrafficFrame");
+
+    QVBoxLayout *mainLay = new QVBoxLayout(floatingTrafficFrame);
+    mainLay->setContentsMargins(0, 0, 0, 0);
+    mainLay->setSpacing(0);
+
+    // 1. Top Bar Widget
+    QWidget *topBar = new QWidget(floatingTrafficFrame);
+    QHBoxLayout *topLay = new QHBoxLayout(topBar);
+    topLay->setContentsMargins(12, 6, 12, 6);
+    topLay->setSpacing(10);
+
+    // Dropdown Mode Button
+    trafficModeBtn = new QToolButton(topBar);
+    trafficModeBtn->setText("Giao thông theo thời gian thực ▾");
+    trafficModeBtn->setCursor(Qt::PointingHandCursor);
+    trafficModeBtn->setObjectName("trafficModeBtn");
+
+    QMenu *modeMenu = new QMenu(trafficModeBtn);
+    QAction *actLive = modeMenu->addAction("Giao thông trực tiếp");
+    QAction *actTypical = modeMenu->addAction("Tình trạng giao thông điển hình");
+
+    connect(actLive, &QAction::triggered, this, [this]() {
+      isTypicalMode = false;
+      trafficModeBtn->setText("Giao thông theo thời gian thực ▾");
+      typicalTrafficPanel->hide();
+      floatingTrafficFrame->adjustSize();
+      repositionFloatingTraffic();
+      applyLiveTraffic();
+      if (trafficSimTimer) trafficSimTimer->start(2500);
+      emit statusMessage("Đã chuyển sang: Giao thông theo thời gian thực (Trực tiếp)");
+    });
+
+    connect(actTypical, &QAction::triggered, this, [this]() {
+      isTypicalMode = true;
+      trafficModeBtn->setText("Tình trạng giao thông điển hình ▾");
+      typicalTrafficPanel->show();
+      floatingTrafficFrame->adjustSize();
+      repositionFloatingTraffic();
+      if (trafficSimTimer) trafficSimTimer->stop();
+      int val = typicalTimeSlider ? typicalTimeSlider->value() : (9 * 60);
+      int h = val / 60;
+      int m = (val % 60) / 15 * 15;
+      applyTypicalTraffic(selectedDayIndex, h, m);
+    });
+
+    trafficModeBtn->setMenu(modeMenu);
+    trafficModeBtn->setPopupMode(QToolButton::InstantPopup);
+    topLay->addWidget(trafficModeBtn);
+
+    // Divider 1
+    QFrame *div1 = new QFrame(topBar);
+    div1->setFrameShape(QFrame::VLine);
+    div1->setObjectName("trafficDiv");
+    div1->setFixedHeight(16);
+    topLay->addWidget(div1);
+
+    // Legend Widget
+    QWidget *legendW = new QWidget(topBar);
+    QHBoxLayout *legLay = new QHBoxLayout(legendW);
+    legLay->setContentsMargins(0, 0, 0, 0);
+    legLay->setSpacing(5);
+
+    QLabel *lblFast = new QLabel("Nhanh", legendW);
+    lblFast->setObjectName("trafficLegendText");
+    legLay->addWidget(lblFast);
+
+    auto makeBar = [legendW, legLay](const QColor &c) {
+      QFrame *b = new QFrame(legendW);
+      b->setFixedSize(16, 7);
+      b->setStyleSheet(QString("background: %1; border-radius: 1.5px;").arg(c.name()));
+      legLay->addWidget(b);
+    };
+
+    makeBar(QColor(0, 214, 143));   // #00D68F (Nhanh - Xanh lá)
+    makeBar(QColor(255, 209, 59));  // #FFD13B (Vàng)
+    makeBar(QColor(255, 77, 77));   // #FF4D4D (Cam đỏ)
+    makeBar(QColor(158, 42, 43));   // #9E2A2B (Đỏ sẫm - Chậm)
+
+    QLabel *lblSlow = new QLabel("Chậm", legendW);
+    lblSlow->setObjectName("trafficLegendText");
+    legLay->addWidget(lblSlow);
+
+    topLay->addWidget(legendW);
+
+    // Divider 2
+    QFrame *div2 = new QFrame(topBar);
+    div2->setFrameShape(QFrame::VLine);
+    div2->setObjectName("trafficDiv");
+    div2->setFixedHeight(16);
+    topLay->addWidget(div2);
+
+    // Toggle switch
+    floatingTrafficSwitch = new TrafficSwitch(topBar);
+    floatingTrafficSwitch->setChecked(showTrafficLayer);
+    connect(floatingTrafficSwitch, &TrafficSwitch::toggled, this, &MapView::setTrafficLayerVisible);
+    topLay->addWidget(floatingTrafficSwitch);
+
+    mainLay->addWidget(topBar);
+
+    // 2. Typical Traffic Bottom Panel
+    typicalTrafficPanel = new QWidget(floatingTrafficFrame);
+    QVBoxLayout *botLay = new QVBoxLayout(typicalTrafficPanel);
+    botLay->setContentsMargins(12, 0, 12, 10);
+    botLay->setSpacing(8);
+
+    QFrame *hDiv = new QFrame(typicalTrafficPanel);
+    hDiv->setFrameShape(QFrame::HLine);
+    hDiv->setObjectName("trafficHDiv");
+    botLay->addWidget(hDiv);
+
+    QHBoxLayout *contentLay = new QHBoxLayout;
+    contentLay->setContentsMargins(0, 0, 0, 0);
+    contentLay->setSpacing(14);
+
+    // Left Column: Day buttons & time label
+    QVBoxLayout *leftCol = new QVBoxLayout;
+    leftCol->setContentsMargins(0, 0, 0, 0);
+    leftCol->setSpacing(5);
+
+    QHBoxLayout *dayLay = new QHBoxLayout;
+    dayLay->setContentsMargins(0, 0, 0, 0);
+    dayLay->setSpacing(3);
+
+    for (int i = 0; i < 7; ++i) {
+      QPushButton *btn = new QPushButton(kDayShortNames[i], typicalTrafficPanel);
+      btn->setCursor(Qt::PointingHandCursor);
+      btn->setFixedSize(24, 24);
+      connect(btn, &QPushButton::clicked, this, [this, i]() {
+        selectedDayIndex = i;
+        updateDayButtonsUI();
+        int val = typicalTimeSlider->value();
+        int h = val / 60;
+        int m = (val % 60) / 15 * 15;
+        typicalTimeLabel->setText(QString("%1,%2:%3").arg(kDayNames[selectedDayIndex]).arg(h, 2, 10, QChar('0')).arg(m, 2, 10, QChar('0')));
+        applyTypicalTraffic(selectedDayIndex, h, m);
+      });
+      dayLay->addWidget(btn);
+      dayButtons.append(btn);
+    }
+    leftCol->addLayout(dayLay);
+
+    typicalTimeLabel = new QLabel("Thứ Hai,09:00", typicalTrafficPanel);
+    typicalTimeLabel->setObjectName("typicalTimeLabel");
+    leftCol->addWidget(typicalTimeLabel);
+
+    contentLay->addLayout(leftCol);
+
+    // Right Column: Slider & Scale
+    QVBoxLayout *rightCol = new QVBoxLayout;
+    rightCol->setContentsMargins(0, 0, 0, 0);
+    rightCol->setSpacing(0);
+
+    typicalTimeSlider = new QSlider(Qt::Horizontal, typicalTrafficPanel);
+    typicalTimeSlider->setRange(6 * 60, 22 * 60);
+    typicalTimeSlider->setSingleStep(15);
+    typicalTimeSlider->setPageStep(60);
+    typicalTimeSlider->setValue(9 * 60);
+    typicalTimeSlider->setCursor(Qt::PointingHandCursor);
+    typicalTimeSlider->setFixedWidth(190);
+
+    typicalScaleWidget = new TrafficTimeScaleWidget(typicalTrafficPanel);
+    typicalScaleWidget->setFixedWidth(190);
+
+    connect(typicalTimeSlider, &QSlider::valueChanged, this, [this](int val) {
+      typicalMinuteOfDay = val;
+      int h = val / 60;
+      int m = (val % 60) / 15 * 15;
+      typicalTimeLabel->setText(QString("%1,%2:%3").arg(kDayNames[selectedDayIndex]).arg(h, 2, 10, QChar('0')).arg(m, 2, 10, QChar('0')));
+      applyTypicalTraffic(selectedDayIndex, h, m);
+    });
+
+    rightCol->addWidget(typicalTimeSlider);
+    rightCol->addWidget(typicalScaleWidget);
+
+    contentLay->addLayout(rightCol);
+    botLay->addLayout(contentLay);
+
+    mainLay->addWidget(typicalTrafficPanel);
+    typicalTrafficPanel->hide();
+
+    updateDayButtonsUI();
+    updateFloatingTrafficTheme();
+    floatingTrafficFrame->adjustSize();
+  }
+
+  void updateDayButtonsUI() {
+    for (int i = 0; i < dayButtons.size(); ++i) {
+      if (i == selectedDayIndex) {
+        dayButtons[i]->setStyleSheet(
+            "QPushButton { background: #00796B; color: #FFFFFF; font-weight: bold; "
+            "font-size: 11px; border: none; border-radius: 12px; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; }");
+      } else {
+        dayButtons[i]->setStyleSheet(
+            darkMode ? "QPushButton { background: transparent; color: #BDC1C6; font-size: 11px; "
+                       "border: none; border-radius: 12px; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; } "
+                       "QPushButton:hover { background: #3C4043; }"
+                     : "QPushButton { background: transparent; color: #3C4043; font-size: 11px; "
+                       "border: none; border-radius: 12px; min-width: 24px; max-width: 24px; min-height: 24px; max-height: 24px; } "
+                       "QPushButton:hover { background: #F1F3F4; }");
+      }
+    }
+  }
+
+  void repositionFloatingTraffic() {
+    if (!floatingTrafficFrame) return;
+    int tw = floatingTrafficFrame->width();
+    int th = floatingTrafficFrame->height();
+    int tx = std::max(20, (width() - tw) / 2);
+    int ty = height() - th - 20;
+    floatingTrafficFrame->move(tx, ty);
+  }
+
+  void updateFloatingTrafficTheme() {
+    if (!floatingTrafficFrame) return;
+
+    if (typicalScaleWidget) {
+      typicalScaleWidget->setDark(darkMode);
+    }
+
+    if (darkMode) {
+      floatingTrafficFrame->setStyleSheet(R"(
+        QFrame#floatingTrafficFrame {
+          background: #202124;
+          border: 1px solid #3C4043;
+          border-radius: 8px;
+        }
+        QToolButton#trafficModeBtn {
+          background: transparent;
+          border: none;
+          color: #E8EAED;
+          font-family: 'Segoe UI';
+          font-size: 12px;
+          font-weight: 500;
+          padding: 4px 6px;
+          border-radius: 4px;
+        }
+        QToolButton#trafficModeBtn:hover {
+          background: #303134;
+        }
+        QFrame#trafficDiv, QFrame#trafficHDiv {
+          border: none;
+          background: #3C4043;
+        }
+        QLabel#trafficLegendText {
+          color: #9AA0A6;
+          font-family: 'Segoe UI';
+          font-size: 11px;
+          font-style: italic;
+        }
+        QLabel#typicalTimeLabel {
+          color: #E8EAED;
+          font-family: 'Segoe UI';
+          font-size: 12px;
+          font-weight: bold;
+        }
+        QSlider::groove:horizontal {
+          height: 3px;
+          background: #3C4043;
+          border-radius: 1px;
+        }
+        QSlider::sub-page:horizontal {
+          background: #00897B;
+          border-radius: 1px;
+        }
+        QSlider::handle:horizontal {
+          background: #00897B;
+          border: 2px solid #202124;
+          width: 14px;
+          height: 14px;
+          margin: -6px 0;
+          border-radius: 7px;
+        }
+        QSlider::handle:horizontal:hover {
+          background: #26A69A;
+        }
+      )");
+    } else {
+      floatingTrafficFrame->setStyleSheet(R"(
+        QFrame#floatingTrafficFrame {
+          background: #FFFFFF;
+          border: 1px solid #DADCE0;
+          border-radius: 8px;
+        }
+        QToolButton#trafficModeBtn {
+          background: transparent;
+          border: none;
+          color: #202124;
+          font-family: 'Segoe UI';
+          font-size: 12px;
+          font-weight: 500;
+          padding: 4px 6px;
+          border-radius: 4px;
+        }
+        QToolButton#trafficModeBtn:hover {
+          background: #F1F3F4;
+        }
+        QFrame#trafficDiv, QFrame#trafficHDiv {
+          border: none;
+          background: #E0E0E0;
+        }
+        QLabel#trafficLegendText {
+          color: #5F6368;
+          font-family: 'Segoe UI';
+          font-size: 11px;
+          font-style: italic;
+        }
+        QLabel#typicalTimeLabel {
+          color: #202124;
+          font-family: 'Segoe UI';
+          font-size: 12px;
+          font-weight: bold;
+        }
+        QSlider::groove:horizontal {
+          height: 3px;
+          background: #DADCE0;
+          border-radius: 1px;
+        }
+        QSlider::sub-page:horizontal {
+          background: #00796B;
+          border-radius: 1px;
+        }
+        QSlider::handle:horizontal {
+          background: #00796B;
+          border: 2px solid #FFFFFF;
+          width: 14px;
+          height: 14px;
+          margin: -6px 0;
+          border-radius: 7px;
+        }
+        QSlider::handle:horizontal:hover {
+          background: #004D40;
+        }
+      )");
+    }
+    updateDayButtonsUI();
+  }
+
+  void updateCityTrafficOverlay() {
+    for (const auto &ref : trafficOverlayLines) {
+      if (ref.line) {
+        double traf = trafficOf(graph, ref.u, ref.v);
+        QColor c = trafficToColor(traf);
+        int lineW = ref.isMajor ? 4 : 3;
+        ref.line->setPen(QPen(c, lineW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+      }
+    }
+  }
+
+  void applyTypicalTraffic(int dayOfWeek, int hour, int minute) {
+    double timeInHours = hour + minute / 60.0;
+    bool isWeekend = (dayOfWeek >= 5);
+
+    double rushBridge = 1.0;
+    double rushMajor = 1.0;
+    double rushSecondary = 1.0;
+    double rushBeach = 1.0;
+    double rushQuiet = 1.0;
+    QString desc;
+
+    if (!isWeekend) {
+      // ===== NGÀY TRONG TUẦN (T2 - T6) =====
+      if (timeInHours >= 6.5 && timeInHours < 7.25) {
+        rushBridge = 1.45; rushMajor = 1.35; rushSecondary = 1.20; rushBeach = 1.05; rushQuiet = 0.95;
+        desc = "Bắt đầu giờ cao điểm sáng";
+      } else if (timeInHours >= 7.25 && timeInHours <= 8.5) {
+        double peak = 1.0 - std::abs(timeInHours - 7.75) / 0.75;
+        rushBridge = 2.05 + 0.35 * peak;      // 2.05 - 2.40 (Đỏ sẫm / Đỏ)
+        rushMajor = 1.75 + 0.30 * peak;       // 1.75 - 2.05 (Cam / Đỏ)
+        rushSecondary = 1.35 + 0.20 * peak;   // 1.35 - 1.55 (Vàng / Cam)
+        rushBeach = 1.10;                     // 1.10 (Xanh)
+        rushQuiet = 1.00;                     // 1.00 (Xanh)
+        desc = "Cao điểm sáng (Ùn tắc khu vực trung tâm & cầu)";
+      } else if (timeInHours > 8.5 && timeInHours <= 9.5) {
+        rushBridge = 1.50; rushMajor = 1.40; rushSecondary = 1.25; rushBeach = 1.05; rushQuiet = 0.98;
+        desc = "Tan dần cao điểm sáng";
+      } else if (timeInHours > 9.5 && timeInHours < 11.25) {
+        rushBridge = 1.25; rushMajor = 1.20; rushSecondary = 1.10; rushBeach = 1.00; rushQuiet = 0.95;
+        desc = "Lưu thông thông thoáng";
+      } else if (timeInHours >= 11.25 && timeInHours <= 12.75) {
+        double peak = 1.0 - std::abs(timeInHours - 12.0) / 0.75;
+        rushBridge = 1.65 + 0.20 * peak;      // 1.65 - 1.85 (Cam)
+        rushMajor = 1.55 + 0.25 * peak;       // 1.55 - 1.80 (Vàng đậm / Cam)
+        rushSecondary = 1.35 + 0.15 * peak;   // 1.35 - 1.50 (Vàng)
+        rushBeach = 1.05;                     // 1.05 (Xanh)
+        rushQuiet = 0.95;                     // 0.95 (Xanh)
+        desc = "Tan tầm trưa (Đông khu vực văn phòng & trường học)";
+      } else if (timeInHours > 12.75 && timeInHours < 16.5) {
+        rushBridge = 1.25; rushMajor = 1.20; rushSecondary = 1.10; rushBeach = 1.05; rushQuiet = 0.95;
+        desc = "Lưu thông bình thường";
+      } else if (timeInHours >= 16.5 && timeInHours <= 18.5) {
+        double peak = 1.0 - std::abs(timeInHours - 17.5) / 1.0;
+        rushBridge = 2.15 + 0.35 * peak;      // 2.15 - 2.50 (Đỏ sẫm / Đỏ)
+        rushMajor = 1.85 + 0.35 * peak;       // 1.85 - 2.20 (Đỏ)
+        rushSecondary = 1.45 + 0.25 * peak;   // 1.45 - 1.70 (Vàng đậm / Cam)
+        rushBeach = 1.30;                     // 1.30 (Vàng nhẹ)
+        rushQuiet = 1.05;                     // 1.05 (Xanh)
+        desc = "Cao điểm chiều (Ùn tắc tan tầm trên diện rộng)";
+      } else if (timeInHours > 18.5 && timeInHours <= 20.0) {
+        rushBridge = 1.55; rushMajor = 1.45; rushSecondary = 1.30; rushBeach = 1.20; rushQuiet = 0.98;
+        desc = "Buổi tối (Đông nhẹ khu phố ẩm thực)";
+      } else if (timeInHours > 20.0 && timeInHours <= 22.0) {
+        rushBridge = 1.20; rushMajor = 1.15; rushSecondary = 1.05; rushBeach = 1.00; rushQuiet = 0.90;
+        desc = "Đêm (Lưu thông rất thoáng)";
+      } else {
+        rushBridge = 0.90; rushMajor = 0.90; rushSecondary = 0.85; rushBeach = 0.85; rushQuiet = 0.80;
+        desc = "Đêm muộn (Đường vắng)";
+      }
+    } else {
+      // ===== CUỐI TUẦN (THỨ BẢY & CHỦ NHẬT) =====
+      if (timeInHours >= 7.0 && timeInHours < 9.0) {
+        rushBridge = 1.15; rushMajor = 1.10; rushSecondary = 1.05; rushBeach = 1.25; rushQuiet = 0.90;
+        desc = "Cuối tuần - Sáng sớm tắm biển & cà phê";
+      } else if (timeInHours >= 9.0 && timeInHours <= 11.5) {
+        rushBridge = 1.35; rushMajor = 1.30; rushSecondary = 1.25; rushBeach = 1.20; rushQuiet = 0.95;
+        desc = "Cuối tuần - Mua sắm & dạo phố";
+      } else if (timeInHours > 11.5 && timeInHours < 15.5) {
+        rushBridge = 1.20; rushMajor = 1.15; rushSecondary = 1.10; rushBeach = 1.10; rushQuiet = 0.90;
+        desc = "Cuối tuần - Trưa bình thường";
+      } else if (timeInHours >= 15.5 && timeInHours <= 18.5) {
+        rushBridge = 1.70; rushMajor = 1.50; rushSecondary = 1.35; rushBeach = 2.10; rushQuiet = 1.00;
+        desc = "Cuối tuần - Chiều đông đúc bãi biển Mỹ Khê";
+      } else if (timeInHours > 18.5 && timeInHours <= 21.5) {
+        rushBridge = 2.30; rushMajor = 1.80; rushSecondary = 1.50; rushBeach = 1.95; rushQuiet = 1.00;
+        desc = "Cuối tuần - Tối cao điểm dạo phố & Cầu Rồng phun lửa";
+      } else {
+        rushBridge = 1.20; rushMajor = 1.10; rushSecondary = 1.00; rushBeach = 1.15; rushQuiet = 0.85;
+        desc = "Cuối tuần - Đêm muộn";
+      }
+    }
+
+    for (int u = 0; u < graph.nodes.size(); ++u) {
+      for (int i = 0; i < graph.adj[u].size(); ++i) {
+        int v = graph.adj[u][i].to;
+        if (u < v) {
+          Edge &e = graph.adj[u][i];
+          const QString &st = e.streetName;
+
+          double categoryFactor = rushSecondary;
+
+          bool isBeachRoad = (st.contains("Võ Nguyên Giáp") || st.contains("Phạm Văn Đồng") ||
+                              st.contains("Hoàng Sa") || st.contains("Trường Sa") ||
+                              st.contains("Mỹ Khê") || st.contains("Võ Văn Kiệt") ||
+                              st.contains("Hà Bổng") || st.contains("Hồ Nghinh") ||
+                              st.contains("Nguyễn Văn Thoại"));
+
+          bool isQuietRoad = (st.contains("Nguyễn Tất Thành") || st.contains("Như Nguyệt") ||
+                              st.contains("Hà Huy Tập") || st.contains("Thái Thị Bôi") ||
+                              st.contains("Lê Duy Đình") || st.contains("Hồ Công Viên") ||
+                              st.contains("Đỗ Bá") || st.contains("Khu Đô Thị"));
+
+          bool isHotspot = (st.contains("Cầu Sông Hàn") || st.contains("Cầu Rồng") ||
+                            st.contains("Cầu Trần Thị Lý") || st.contains("Cầu Thuận Phước") ||
+                            e.isBridge);
+
+          if (isHotspot) {
+            categoryFactor = rushBridge;
+          } else if (isBeachRoad) {
+            categoryFactor = rushBeach;
+          } else if (isQuietRoad) {
+            categoryFactor = rushQuiet;
+          } else if (e.isMajor) {
+            categoryFactor = rushMajor;
+          }
+
+          // Hash biến thiên ổn định cho từng đoạn đường (u, v) để màu sắc phân hóa tự nhiên
+          unsigned int seed = (static_cast<unsigned int>(std::min(u, v)) * 2654435761u) ^
+                              (static_cast<unsigned int>(std::max(u, v)) * 2246822519u);
+          double variation = 0.85 + ((seed % 1000) / 1000.0) * 0.30;
+
+          double finalFactor = e.baseTraffic * categoryFactor * variation;
+          finalFactor = std::max(0.80, std::min(2.70, finalFactor));
+
+          e.trafficFactor = finalFactor;
+          for (int j = 0; j < graph.adj[v].size(); ++j) {
+            if (graph.adj[v][j].to == u) {
+              graph.adj[v][j].trafficFactor = finalFactor;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    updateCityTrafficOverlay();
+    if (!startPoint.isNull() && !endPoint.isNull()) {
+      recompute();
+    } else {
+      viewport()->update();
+    }
+
+    QString timeStr = QString("%1:%2")
+                          .arg(hour, 2, 10, QChar('0'))
+                          .arg(minute, 2, 10, QChar('0'));
+    emit trafficSimTimeChanged(hour, QString("%1 – %2").arg(timeStr, desc));
+    emit statusMessage(QString("Mô phỏng GT điển hình: %1 %2 – %3")
+                           .arg(kDayNames[dayOfWeek], timeStr, desc));
+  }
+
+  void applyLiveTraffic() {
+    if (isTypicalMode) return;
+
+    QTime now = QTime::currentTime();
+    QDate today = QDate::currentDate();
+    int dayOfWeek = std::clamp(today.dayOfWeek() - 1, 0, 6); // 0=Thứ Hai .. 6=Chủ Nhật
+    int hour = now.hour();
+    int minute = now.minute();
+
+    applyTypicalTraffic(dayOfWeek, hour, minute);
+
+    // Mô phỏng dao động giao thông vi mô sống động thời gian thực (Live Traffic Dynamics)
+    for (int u = 0; u < graph.nodes.size(); ++u) {
+      for (int i = 0; i < graph.adj[u].size(); ++i) {
+        int v = graph.adj[u][i].to;
+        if (u < v && graph.adj[u][i].isMajor) {
+          if ((std::rand() % 100) < 22) {
+            double delta = ((std::rand() % 21) - 10) / 100.0; // dao động ±0.10
+            double f = std::clamp(graph.adj[u][i].trafficFactor + delta, 0.8, 2.7);
+            graph.adj[u][i].trafficFactor = f;
+            for (auto &rev : graph.adj[v]) {
+              if (rev.to == u) { rev.trafficFactor = f; break; }
+            }
+          }
+        }
+      }
+    }
+    updateCityTrafficOverlay();
+    if (!startPoint.isNull() && !endPoint.isNull()) {
+      recompute();
+    } else {
+      viewport()->update();
+    }
+
+    QString timeStr = QString("%1:%2")
+                          .arg(hour, 2, 10, QChar('0'))
+                          .arg(minute, 2, 10, QChar('0'));
+    emit trafficSimTimeChanged(hour, QString("%1 – Trực tiếp").arg(timeStr));
+    emit statusMessage(QString("Mô phỏng GT: 🟢 %1 – Trực tiếp thời gian thực").arg(timeStr));
+  }
+
   void onSmoothAnimTick() {
     if (animSegments.isEmpty()) {
       smoothAnimTimer->stop();
@@ -1471,6 +2182,7 @@ private:
     // 6. CÁC NÚT BỔ SUNG KHU VỰC SÂN BAY & THANH KHÊ TÂY
     graph.addNode(93, "Nguyễn Tất Thành - Cửa Ngõ Cảng", QPointF(485, 21), "junction", "🌊");
     graph.addNode(94, "Xô Viết Nghệ Tĩnh - Điện Biên Phủ", QPointF(360, 270), "junction", "📍");
+    // ⚠️ Node 95: Không có edge kết nối — dùng node 86 thay thế cho vị trí tương đương
     graph.addNode(95, "Xô Viết Nghệ Tĩnh - Nguyễn Tất Thành", QPointF(360, 26), "junction", "🌊");
     graph.addNode(96, "Điện Biên Phủ - Xô Viết Nghệ Tĩnh Đông", QPointF(400, 270), "junction", "📍");
     graph.addNode(97, "Hà Huy Tập - Cửa Ngõ Nam", QPointF(60, 390), "junction", "📍");
@@ -1786,30 +2498,8 @@ private:
     // 3. KHU VỰC ĐÔ THỊ BỜ ĐÔNG (QUẬN SƠN TRÀ & NGŨ HÀNH SƠN - ĐỒNG BẰNG ĐÔ THỊ)
     // Thực tế bản đồ trung tâm Đà Nẵng là khu phố bàn cờ bằng phẳng, tiếp giáp biển Mỹ Khê ở phía Đông
 
-    // 4. SÔNG HÀN — Hai bờ uốn lượng theo thực tế Google Maps
-    // Bờ Tây sông Hàn (x xung quanh 660–680, unh theo chiều dọc)
-    QPainterPath riverLeft;
-    riverLeft.moveTo(678, -80);
-    riverLeft.cubicTo(673, -20, 668,  30, 672,  80);   // éo nhẹ vào trong phía Bắc
-    riverLeft.cubicTo(676, 130, 670, 150, 668, 170);   // éo nhẹ ra ngoài
-    riverLeft.cubicTo(664, 215, 660, 265, 658, 310);   // chạy xuống, lượn sang trái
-    riverLeft.cubicTo(655, 355, 650, 395, 645, 430);   // tiếp tục unh trái
-    riverLeft.cubicTo(640, 475, 644, 515, 648, 555);   // chạy xuống, lượn phải
-    riverLeft.cubicTo(652, 590, 650, 620, 648, 660);   // xuống đáy
-    riverLeft.lineTo(648, 760);
-
-    // Bờ Đông sông Hàn (x xung quanh 760–780, uốn cượng ngược phía)
-    QPainterPath riverRight;
-    riverRight.moveTo(780, 760);
-    riverRight.lineTo(780, 660);
-    riverRight.cubicTo(778, 625, 776, 595, 774, 560);   // lượn nhẹ vào trong
-    riverRight.cubicTo(772, 520, 774, 480, 776, 440);   // unh ra ngoài
-    riverRight.cubicTo(778, 395, 775, 355, 770, 315);   // unh vào
-    riverRight.cubicTo(765, 270, 762, 225, 763, 175);   // chạy lên
-    riverRight.cubicTo(764, 145, 762, 115, 760,  80);   // unh nhẹ
-    riverRight.cubicTo(758,  35, 756, -15, 760, -80);   // lên phía Bắc
-
-    // Tạo vùng khép kín cho sông
+    // 4. SÔNG HÀN — Hai bờ uốn lượn theo thực tế Google Maps
+    // Tạo vùng khép kín cho sông (bờ Tây x≈660-680, bờ Đông x≈760-780)
     QPainterPath river;
     river.moveTo(678, -80);
     river.cubicTo(673, -20, 668,  30, 672,  80);
@@ -2002,6 +2692,25 @@ private:
         }
       }
     }
+
+    // Lớp 3: Traffic Overlay (Lớp màu sắc mật độ giao thông phủ trên mặt đường toàn thành phố)
+    trafficLinesGroup = scene->createItemGroup({});
+    trafficOverlayLines.clear();
+
+    for (int u = 0; u < graph.nodes.size(); ++u) {
+      for (const Edge &e : graph.adj[u]) {
+        if (u < e.to) {
+          int lineW = e.isMajor ? 4 : 3;
+          QColor c = trafficToColor(e.trafficFactor);
+          auto *line = scene->addLine(QLineF(graph.nodes[u].pos, graph.nodes[e.to].pos),
+              QPen(c, lineW, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+          line->setZValue(-8);
+          trafficLinesGroup->addToGroup(line);
+          trafficOverlayLines.append({line, u, e.to, e.isMajor});
+        }
+      }
+    }
+    trafficLinesGroup->setVisible(showTrafficLayer);
 
     // 8. CÁC CÂY CẦU NGHỆ THUẬT DANH TIẾNG ĐÀ NẴNG
     // 8.A. CẦU THUẬN PHƯỚC (CẦU TREO DÂY VÕNG LỚN NHẤT VIỆT NAM Ở CỬA SÔNG HÀN)
@@ -2293,7 +3002,7 @@ private:
       legendGroup->addToGroup(t);
       ly += 21;
     }
-    legendGroup->setVisible(showTrafficLayer);
+    legendGroup->setVisible(false);
 
     scene->setSceneRect(-40, -80, 1320, 860);
   }
@@ -2312,6 +3021,7 @@ private:
     updateFloatingControlTheme();
     updateFloatingSearchBarTheme();
     updateFloatingRouteBannerTheme();
+    updateFloatingTrafficTheme();
 
     stopAnimation();
     stopPathAnim();
@@ -2325,6 +3035,8 @@ private:
     poiGroup = nullptr;
     streetLabelGroup = nullptr;
     legendGroup = nullptr;
+    trafficLinesGroup = nullptr;
+    trafficOverlayLines.clear();
 
     scene->clear();
     drawMap();
@@ -2425,8 +3137,8 @@ private:
     return best;
   }
 
-  std::tuple<int, int, QPointF> findNearestPointOnEdge(QPointF click) {
-    double bestDist = 26.0;
+  std::tuple<int, int, QPointF> findNearestPointOnEdge(QPointF click, double maxDist = 14.0) {
+    double bestDist = maxDist;
     int bestU = -1, bestV = -1;
     QPointF bestProj;
 
@@ -2554,63 +3266,148 @@ private:
 
   void handleRightClick(QMouseEvent *e) {
     QPointF sp = mapToScene(e->pos());
-    auto [u, v, proj] = findNearestPointOnEdge(sp);
-    QMenu menu(this);
+    int nearestNode = findNearestNode(sp, 20.0);
+    auto [u, v, proj] = findNearestPointOnEdge(sp, 14.0);
 
-    if (u != -1) {
-      double cur = trafficOf(graph, u, v);
-      menu.addSection(QString("%1 ↔ %2 (mật độ %3)")
-                          .arg(graph.nodes[u].name, graph.nodes[v].name)
-                          .arg(cur, 0, 'f', 1));
-      QAction *a1 = menu.addAction("Đặt mật độ 1.0 (thông)");
-      QAction *a2 = menu.addAction("Đặt mật độ 1.5 (đông vừa)");
-      QAction *a3 = menu.addAction("Đặt mật độ 2.0 (tắc vừa)");
-      QAction *a4 = menu.addAction("Đặt mật độ 2.5 (tắc nặng)");
+    QMenu menu(this);
+    menu.setStyleSheet(darkMode ?
+      "QMenu { background: #242630; color: #E8EAED; border: 1px solid #5F6368; border-radius: 8px; padding: 4px; }"
+      "QMenu::item { padding: 6px 20px 6px 10px; border-radius: 4px; font-size: 12px; }"
+      "QMenu::item:selected { background: #3C4043; color: #8AB4F8; }"
+      "QMenu::separator { height: 1px; background: #4D5156; margin: 4px 6px; }"
+      :
+      "QMenu { background: #FFFFFF; color: #202124; border: 1px solid #DADCE0; border-radius: 8px; padding: 4px; }"
+      "QMenu::item { padding: 6px 20px 6px 10px; border-radius: 4px; font-size: 12px; }"
+      "QMenu::item:selected { background: #E8F0FE; color: #1A73E8; }"
+      "QMenu::separator { height: 1px; background: #E8EAED; margin: 4px 6px; }"
+    );
+
+    // TH1: Click chuột phải trúng Nút giao / Địa điểm
+    if (nearestNode >= 0) {
+      const Node &n = graph.nodes[nearestNode];
+      menu.addSection(QString("%1 %2").arg(n.icon, n.name));
+      QAction *actSetA = menu.addAction("📍 Chọn làm điểm xuất phát (A)");
+      QAction *actSetB = menu.addAction("🏁 Chọn làm điểm đến (B)");
       menu.addSeparator();
-      QAction *aBan = menu.addAction("Cấm đoạn đường này");
+
+      bool isBanned = bannedNodes.contains(nearestNode);
+      QAction *actBan = menu.addAction(isBanned ? "✅ Bỏ cấm nút giao này" : "🚫 Cấm đi qua nút giao này");
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
       QAction *chosen = menu.exec(e->globalPosition().toPoint());
 #else
       QAction *chosen = menu.exec(e->globalPos());
 #endif
-      if (chosen == a1 || chosen == a2 || chosen == a3 || chosen == a4) {
-        double newT = (chosen == a1)   ? 1.0
-                      : (chosen == a2) ? 1.5
-                      : (chosen == a3) ? 2.0
-                                       : 2.5;
-        for (auto &ed : graph.adj[u])
-          if (ed.to == v)
-            ed.trafficFactor = newT;
-        for (auto &ed : graph.adj[v])
-          if (ed.to == u)
-            ed.trafficFactor = newT;
-
-        stopAnimation();
-        stopPathAnim();
-
-        pathItems.clear();
-        markerItems.clear();
-        altPathItems.clear();
-        secondaryPathItems.clear();
-        pathAnimLines.clear();
-        gridGroup = nullptr;
-
-        scene->clear();
-        drawMap();
-        redrawMarkers();
-        recompute();
-      } else if (chosen == aBan) {
-        bannedEdges.insert({u, v});
+      if (chosen == actSetA) {
+        setEndpointFromNode(nearestNode);
+      } else if (chosen == actSetB) {
+        if (startPoint.isNull()) {
+          setEndpointFromNode(nearestNode);
+        } else {
+          endPoint = n.pos;
+          endEdgeU = nearestNode;
+          endEdgeV = -1;
+          addMarker(endPoint, colorB, "B");
+          recompute();
+          emit endpointsChanged(startEdgeU, nearestNode);
+          emit routeChanged();
+        }
+      } else if (chosen == actBan) {
+        if (isBanned) bannedNodes.remove(nearestNode);
+        else bannedNodes.insert(nearestNode);
         recompute();
       }
       return;
     }
 
-    QAction *aClr = menu.addAction("Xoá tất cả (Esc)");
-    QAction *aSwap = menu.addAction("Đảo A ↔ B");
+    // TH2: Click chuột phải trúng Đoạn đường
+    if (u != -1) {
+      double cur = trafficOf(graph, u, v);
+      QString street = streetOf(graph, u, v);
+      if (street.isEmpty())
+        street = QString("%1 ↔ %2").arg(graph.nodes[u].name, graph.nodes[v].name);
+
+      menu.addSection(QString("🛣️ %1 (Mật độ %2x)").arg(street).arg(cur, 0, 'f', 1));
+      QAction *actSetA = menu.addAction("📍 Chọn điểm này làm xuất phát (A)");
+      QAction *actSetB = menu.addAction("🏁 Chọn điểm này làm điểm đến (B)");
+      menu.addSeparator();
+
+      QMenu *subTraffic = menu.addMenu("🚦 Điều chỉnh mật độ giao thông");
+      QAction *a1 = subTraffic->addAction("🟢 Đặt mật độ 1.0 (Thông thoáng)");
+      QAction *a2 = subTraffic->addAction("🟡 Đặt mật độ 1.4 (Đông vừa)");
+      QAction *a3 = subTraffic->addAction("🟠 Đặt mật độ 1.8 (Ùn ứ)");
+      QAction *a4 = subTraffic->addAction("🔴 Đặt mật độ 2.5 (Tắc nghẽn)");
+      subTraffic->addSeparator();
+      QAction *aResetT = subTraffic->addAction("⚡ Khôi phục mật độ gốc ban đầu");
+
+      menu.addSeparator();
+      bool isEdgeBanned = bannedEdges.contains({u, v}) || bannedEdges.contains({v, u});
+      QAction *aBan = menu.addAction(isEdgeBanned ? "✅ Bỏ cấm đoạn đường này" : "🚫 Cấm đoạn đường này");
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+      QAction *chosen = menu.exec(e->globalPosition().toPoint());
+#else
+      QAction *chosen = menu.exec(e->globalPos());
+#endif
+      if (chosen == actSetA) {
+        setEndpointFromEdge(u, v, proj);
+      } else if (chosen == actSetB) {
+        if (startPoint.isNull()) {
+          setEndpointFromEdge(u, v, proj);
+        } else {
+          endPoint = proj;
+          endEdgeU = u;
+          endEdgeV = v;
+          addMarker(endPoint, colorB, "B");
+          recompute();
+          emit endpointsChanged(startEdgeU, u);
+          emit routeChanged();
+        }
+      } else if (chosen == a1 || chosen == a2 || chosen == a3 || chosen == a4 || chosen == aResetT) {
+        double newT = 1.0;
+        if (chosen == a1) newT = 1.0;
+        else if (chosen == a2) newT = 1.4;
+        else if (chosen == a3) newT = 1.8;
+        else if (chosen == a4) newT = 2.5;
+
+        for (auto &ed : graph.adj[u]) {
+          if (ed.to == v) {
+            ed.trafficFactor = (chosen == aResetT) ? ed.baseTraffic : newT;
+            if (chosen != aResetT) ed.baseTraffic = newT;
+          }
+        }
+        for (auto &ed : graph.adj[v]) {
+          if (ed.to == u) {
+            ed.trafficFactor = (chosen == aResetT) ? ed.baseTraffic : newT;
+            if (chosen != aResetT) ed.baseTraffic = newT;
+          }
+        }
+
+        updateCityTrafficOverlay();
+        if (!startPoint.isNull() && !endPoint.isNull()) {
+          recompute();
+        } else {
+          viewport()->update();
+        }
+        emit statusMessage(QString("Đã cập nhật mật độ %1: %2x").arg(street).arg(newT, 0, 'f', 1));
+      } else if (chosen == aBan) {
+        if (isEdgeBanned) {
+          bannedEdges.remove({u, v});
+          bannedEdges.remove({v, u});
+        } else {
+          bannedEdges.insert({u, v});
+        }
+        recompute();
+      }
+      return;
+    }
+
+    // TH3: Click chuột phải vào khoảng trống bản đồ
+    QAction *aSwap = menu.addAction("🔄 Đảo chiều lộ trình (A ↔ B)");
+    QAction *aClr = menu.addAction("🗑️ Xoá tất cả lộ trình (Esc)");
     menu.addSeparator();
-    QAction *aUnban = menu.addAction("Bỏ cấm tất cả");
+    QAction *aUnban = menu.addAction("🔓 Bỏ cấm tất cả nút & đường");
+    QAction *aReset = menu.addAction("🎯 Căn lại giữa bản đồ");
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAction *chosen = menu.exec(e->globalPosition().toPoint());
 #else
@@ -2624,6 +3421,8 @@ private:
       bannedEdges.clear();
       bannedNodes.clear();
       recompute();
+    } else if (chosen == aReset) {
+      resetView();
     }
   }
 
@@ -3016,13 +3815,7 @@ private:
     smoothAnimTimer->start(35);
   }
 
-  void onAnimTick() {
-    // Để tương thích ngược
-  }
-
   void stopAnimation() {
-    if (animTimer)
-      animTimer->stop();
     if (smoothAnimTimer)
       smoothAnimTimer->stop();
     if (mover) {
@@ -3031,9 +3824,7 @@ private:
       delete mover;
       mover = nullptr;
     }
-    animPath.clear();
     animSegments.clear();
-    animIndex = 0;
     animCurrentDist = 0.0;
   }
 
@@ -3062,66 +3853,22 @@ private:
   }
 
   void onTrafficSimTick() {
-    simMinute += 20;
-    bool hourChanged = false;
+    if (isTypicalMode) return;
+
+    if (!trafficSimEnabled) {
+      applyLiveTraffic();
+      return;
+    }
+
+    simMinute += 15;
     if (simMinute >= 60) {
       simMinute = 0;
       simHour++;
       if (simHour > 22)
         simHour = 6;
-      hourChanged = true;
     }
 
-    QString periodDesc;
-    double minF = 0.8, maxF = 1.2;
-
-    if (simHour >= 7 && simHour <= 9) {
-      periodDesc = "Cao điểm sáng";
-      minF = 1.3;
-      maxF = 2.0;
-    } else if (simHour >= 11 && simHour <= 13) {
-      periodDesc = "Trưa";
-      minF = 1.0;
-      maxF = 1.3;
-    } else if (simHour >= 17 && simHour <= 19) {
-      periodDesc = "Cao điểm chiều";
-      minF = 1.5;
-      maxF = 2.2;
-    } else {
-      periodDesc = "Bình thường";
-      minF = 0.8;
-      maxF = 1.2;
-    }
-
-    // Cập nhật trafficFactor cho ~30% cạnh ngẫu nhiên khi đổi giờ
-    if (hourChanged || primaryPoints.isEmpty()) {
-      for (int u = 0; u < graph.nodes.size(); ++u) {
-        for (int i = 0; i < graph.adj[u].size(); ++i) {
-          int v = graph.adj[u][i].to;
-          if (u < v) {
-            if ((std::rand() % 100) < 30) {
-              double rnd = static_cast<double>(std::rand()) / RAND_MAX;
-              double factor = minF + rnd * (maxF - minF);
-              graph.adj[u][i].trafficFactor = factor;
-              for (int j = 0; j < graph.adj[v].size(); ++j) {
-                if (graph.adj[v][j].to == u) {
-                  graph.adj[v][j].trafficFactor = factor;
-                  break;
-                }
-              }
-            }
-          }
-        }
-      }
-      recompute();
-      viewport()->update();
-    }
-
-    QString timeStr = QString("%1:%2")
-                          .arg(simHour, 2, 10, QChar('0'))
-                          .arg(simMinute, 2, 10, QChar('0'));
-    emit trafficSimTimeChanged(simHour, QString("%1 – %2").arg(timeStr, periodDesc));
-    emit statusMessage(QString("Mô phỏng GT: 🕐 %1 – %2").arg(timeStr, periodDesc));
+    applyTypicalTraffic(selectedDayIndex, simHour, simMinute);
   }
 };
 
@@ -3258,7 +4005,7 @@ public:
     connect(view, &MapView::endpointsChanged, this, &MainWindow::onEndpointsUpdated);
 
     statusBar()->showMessage(
-        "Sẵn sàng — Bản đồ đầy đủ 81 giao lộ Đà Nẵng | Click chọn điểm A → B");
+        QString("Sẵn sàng — Bản đồ đầy đủ %1 giao lộ Đà Nẵng | Click chọn điểm A → B").arg(view->nodeCount()));
     onRouteUpdated();
     view->setEndpoints(5, 55);
   }
@@ -3752,7 +4499,7 @@ private:
     tb->addAction("▶ Mô phỏng GPS", view, &MapView::playNavigationSimulation);
     tb->addAction("📋 Copy lộ trình", this, &MainWindow::copyRoute);
     tb->addAction("📷 Lưu ảnh", this, &MainWindow::savePng);
-    tb->addAction("📍 Danh mục địa điểm (81)", this, &MainWindow::showNodeTable);
+    tb->addAction(QString("📍 Danh mục địa điểm (%1)").arg(view->nodeCount()), this, &MainWindow::showNodeTable);
 
     tb->addSeparator();
 
@@ -3778,7 +4525,7 @@ private:
       }
     });
 
-    simBox->setChecked(true);
+    simBox->setChecked(false);
   }
 
   void buildDirectionsDock() {
