@@ -331,6 +331,7 @@ public:
 
     setupFloatingControls();
     setupFloatingSearchBar();
+    setupFloatingCategoryChips();
     setupFloatingRouteBanner();
     setupFloatingTrafficWidget();
 
@@ -580,7 +581,7 @@ public slots:
   void zoomOut() { scale(0.83, 0.83); viewport()->update(); }
   void resetView() {
     resetTransform();
-    fitInView(QRectF(15, -10, 1100, 690), Qt::KeepAspectRatio);
+    fitInView(QRectF(-10, -25, 1160, 740), Qt::KeepAspectRatio);
     viewport()->update();
   }
   void fitView() {
@@ -634,6 +635,9 @@ protected:
     QGraphicsView::resizeEvent(e);
     if (floatingSearchBar) {
       floatingSearchBar->move(18, 16);
+    }
+    if (floatingCategoryBar) {
+      floatingCategoryBar->move(18, 64);
     }
     if (floatingRouteBanner) {
       int bw = floatingRouteBanner->width();
@@ -1089,6 +1093,8 @@ private:
   QLineEdit *searchInput = nullptr;
   QToolButton *searchClearBtn = nullptr;
   QCompleter *searchCompleter = nullptr;
+  QFrame *floatingCategoryBar = nullptr;
+  QVector<QPushButton *> categoryChipButtons;
 
   QFrame *floatingRouteBanner = nullptr;
   QLabel *bannerModeIcon = nullptr;
@@ -1369,6 +1375,99 @@ private:
           border-radius: 12px;
         }
         QToolButton:hover { background: #F1F3F4; }
+      )");
+    }
+  }
+
+  void setupFloatingCategoryChips() {
+    floatingCategoryBar = new QFrame(this);
+    floatingCategoryBar->setObjectName("categoryBarFrame");
+
+    QHBoxLayout *lay = new QHBoxLayout(floatingCategoryBar);
+    lay->setContentsMargins(6, 2, 6, 2);
+    lay->setSpacing(6);
+
+    auto makeChip = [this, lay](const QString &text, const QString &statusText, int targetNodeId) {
+      QPushButton *btn = new QPushButton(text, floatingCategoryBar);
+      btn->setCursor(Qt::PointingHandCursor);
+      btn->setObjectName("catChipBtn");
+      connect(btn, &QPushButton::clicked, this, [this, targetNodeId, statusText]() {
+        if (targetNodeId >= 0 && targetNodeId < graph.nodes.size()) {
+          centerOnNode(targetNodeId);
+        }
+        emit statusMessage(statusText);
+      });
+      lay->addWidget(btn);
+      categoryChipButtons.append(btn);
+      return btn;
+    };
+
+    makeChip("🍴 Nhà hàng", "🍴 Nhà hàng: Mộc Quán Seafood, Bếp Cuốn Michelin, Pizza 4P's...", 158);
+    makeChip("🏨 Khách sạn", "🏨 Khách sạn: Mường Thanh Luxury, Four Points by Sheraton...", 162);
+    makeChip("📷 Tham quan", "📷 Điểm tham quan: Tượng Cá Chép Hóa Rồng, Cầu Tình Yêu, Cầu Rồng...", 156);
+    makeChip("🏖️ Bãi biển", "🏖️ Bãi biển du lịch: Bãi Biển Mỹ Khê, Bãi tắm Phạm Văn Đồng...", 75);
+    makeChip("☕ Quán Café", "☕ Quán Café: Cửa Ngõ Café, B&B Bakery...", 159);
+    makeChip("🛍️ Mua sắm", "🛍️ Trung tâm mua sắm: Vincom Plaza Sơn Trà, Chợ Hàn, Chợ Cồn, Chợ Đêm...", 58);
+
+    floatingCategoryBar->adjustSize();
+    floatingCategoryBar->resize(floatingCategoryBar->sizeHint().width() + 14, 32);
+    updateFloatingCategoryBarTheme();
+  }
+
+  void updateFloatingCategoryBarTheme() {
+    if (!floatingCategoryBar) return;
+    if (darkMode) {
+      floatingCategoryBar->setStyleSheet(R"(
+        QFrame#categoryBarFrame {
+          background: rgba(36, 38, 48, 230);
+          border: 1px solid #44475A;
+          border-radius: 16px;
+        }
+        QPushButton#catChipBtn {
+          background: #2D3038;
+          border: 1px solid #44475A;
+          border-radius: 12px;
+          color: #E8EAED;
+          font-family: 'Segoe UI';
+          font-size: 11px;
+          font-weight: 500;
+          padding: 3px 10px;
+        }
+        QPushButton#catChipBtn:hover {
+          background: #3C4048;
+          border-color: #6272A4;
+        }
+        QPushButton#catChipBtn:pressed {
+          background: #44475A;
+          color: #8AB4F8;
+        }
+      )");
+    } else {
+      floatingCategoryBar->setStyleSheet(R"(
+        QFrame#categoryBarFrame {
+          background: rgba(255, 255, 255, 240);
+          border: 1px solid #DADCE0;
+          border-radius: 16px;
+        }
+        QPushButton#catChipBtn {
+          background: #FFFFFF;
+          border: 1px solid #DADCE0;
+          border-radius: 12px;
+          color: #3C4043;
+          font-family: 'Segoe UI';
+          font-size: 11px;
+          font-weight: 500;
+          padding: 3px 10px;
+        }
+        QPushButton#catChipBtn:hover {
+          background: #F1F3F4;
+          border-color: #BDC1C6;
+        }
+        QPushButton#catChipBtn:pressed {
+          background: #E8F0FE;
+          color: #1A73E8;
+          border-color: #1A73E8;
+        }
       )");
     }
   }
@@ -2144,26 +2243,26 @@ private:
     graph.addNode(58, "Vincom Plaza Đà Nẵng (Sơn Trà)", QPointF(800, 150), "poi", "🛍️");
     graph.addNode(59, "Trần Hưng Đạo - Cầu Sông Hàn Bắc", QPointF(775, 80), "junction", "📍");
     graph.addNode(60, "Đầu Cầu Rồng (Bờ Đông Trần Hưng Đạo)", QPointF(775, 380), "bridge", "🌉");
-    graph.addNode(61, "Trần Hưng Đạo - Cầu Rồng Bắc", QPointF(775, 275), "junction", "📍");
+    graph.addNode(61, "Trần Hưng Đạo - Cầu Rồng Bắc", QPointF(775, 270), "junction", "📍");
     graph.addNode(62, "Trần Hưng Đạo - Cầu Trần Thị Lý", QPointF(775, 610), "junction", "📍");
     graph.addNode(63, "Ngô Quyền - Phạm Văn Đồng (AH17)", QPointF(830, 150), "junction", "📍");
     graph.addNode(64, "Ngô Quyền - Võ Văn Kiệt (AH17)", QPointF(830, 380), "junction", "📍");
     graph.addNode(65, "Ngô Quyền - Trần Thị Lý (AH17)", QPointF(830, 610), "junction", "📍");
     graph.addNode(66, "Phạm Cự Lượng - Võ Văn Kiệt", QPointF(890, 380), "junction", "📍");
-    graph.addNode(67, "Phạm Cự Lượng - An Hải", QPointF(890, 270), "junction", "📍");
+    graph.addNode(67, "Phạm Cự Lượng - An Hải Bắc", QPointF(890, 270), "junction", "📍");
     graph.addNode(68, "Nguyễn Thiện Kế - Võ Văn Kiệt", QPointF(940, 380), "junction", "📍");
     graph.addNode(69, "Nguyễn Thiện Kế - Lê Hữu Trác", QPointF(940, 460), "junction", "📍");
-    graph.addNode(70, "Hồ Nghinh - Phạm Văn Đồng", QPointF(1010, 150), "junction", "📍");
-    graph.addNode(71, "Hồ Nghinh - Võ Văn Kiệt", QPointF(1010, 380), "junction", "📍");
-    graph.addNode(72, "Hà Bổng - Võ Văn Kiệt", QPointF(1045, 380), "junction", "📍");
-    graph.addNode(73, "Hà Bổng - Lê Hữu Trác", QPointF(1045, 460), "junction", "📍");
+    graph.addNode(70, "Hồ Nghinh - Phạm Văn Đồng", QPointF(1015, 150), "junction", "📍");
+    graph.addNode(71, "Hồ Nghinh - Võ Văn Kiệt", QPointF(1015, 380), "junction", "📍");
+    graph.addNode(72, "Hà Bổng - Võ Văn Kiệt", QPointF(1050, 380), "junction", "📍");
+    graph.addNode(73, "Hà Bổng - Lê Hữu Trác", QPointF(1050, 460), "junction", "📍");
     graph.addNode(74, "Bãi Tắm Phạm Văn Đồng", QPointF(1085, 150), "beach", "🏖️");
     graph.addNode(75, "Bãi Biển Mỹ Khê (Võ Văn Kiệt)", QPointF(1085, 380), "beach", "🏖️");
     graph.addNode(76, "Võ Nguyên Giáp - Lê Hữu Trác", QPointF(1085, 460), "beach", "🏖️");
-    graph.addNode(77, "Võ Nguyên Giáp - Nguyễn Văn Thoại", QPointF(1085, 610), "beach", "🏖️");
-    graph.addNode(78, "Trần Thị Lý Đông - Ngũ Hành Sơn", QPointF(830, 640), "junction", "📍");
-    graph.addNode(79, "Đỗ Bá - Ngũ Hành Sơn", QPointF(930, 640), "junction", "📍");
-    graph.addNode(80, "Khu Đô Thị Bắc Mỹ Phú", QPointF(1010, 640), "poi", "🏘️");
+    graph.addNode(77, "Võ Nguyên Giáp - Nguyễn Văn Thoại", QPointF(1085, 565), "beach", "🏖️");
+    graph.addNode(78, "Ngũ Hành Sơn - Đỗ Bá (AH17)", QPointF(830, 650), "junction", "📍");
+    graph.addNode(79, "Châu Thị Vĩnh Tế - Đỗ Bá", QPointF(940, 650), "junction", "📍");
+    graph.addNode(80, "Đỗ Bá - Khu Đô Thị Bắc Mỹ Phú", QPointF(1010, 650), "poi", "🏘️");
 
     // 5. CÁC NÚT MỞ RỘNG TẠI THANH KHÊ & ĐƯỜNG NGUYỄN TẤT THÀNH
     graph.addNode(81, "Điện Biên Phủ - Hà Huy Tập", QPointF(60, 270), "junction", "📍");
@@ -2199,8 +2298,88 @@ private:
     graph.addNode(108, "An Hải Bắc - Đông Hưng Thuận", QPointF(890, 150), "junction", "📍");
     graph.addNode(109, "Trần Hưng Đạo - Phía Bắc Sơn Trà", QPointF(775, 45), "junction", "📍");
     graph.addNode(110, "Ngô Quyền Bắc - Mỹ Khê Bắc", QPointF(830, 60), "junction", "📍");
-    graph.addNode(111, "Nguyễn Văn Thoại - Nam Kỳ Khởi Nghĩa", QPointF(1010, 640), "junction", "📍");
+    graph.addNode(111, "Nguyễn Văn Thoại - Nam Kỳ Khởi Nghĩa", QPointF(1010, 565), "junction", "📍");
     graph.addNode(112, "Võ Nguyên Giáp - Võ Văn Kiệt", QPointF(1085, 380), "junction", "📍");
+
+    // 7. CÁC NÚT MỞ RỘNG MẠNG LƯỚI ĐÔ THỊ BỜ ĐÔNG (SƠN TRÀ & NGŨ HÀNH SƠN)
+    // --- Tuyến đường MORRISON (Y = 210) ---
+    graph.addNode(113, "Trần Hưng Đạo - Morrison", QPointF(775, 210), "junction", "📍");
+    graph.addNode(114, "Ngô Quyền - Morrison (AH17)", QPointF(830, 210), "junction", "📍");
+    graph.addNode(115, "Phạm Cự Lượng - Morrison", QPointF(890, 210), "junction", "📍");
+    graph.addNode(116, "Chính Hữu - Morrison", QPointF(975, 210), "junction", "📍");
+    graph.addNode(117, "Hồ Nghinh - Morrison", QPointF(1015, 210), "junction", "📍");
+    graph.addNode(118, "Hà Nghinh - Morrison", QPointF(1050, 210), "junction", "📍");
+    graph.addNode(119, "Võ Nguyên Giáp - Morrison", QPointF(1085, 210), "beach", "🏖️");
+
+    // --- Tuyến đường AN HẢI BẮC / LƯU HỮU PHƯỚC (Y = 270) ---
+    graph.addNode(120, "Trần Hưng Đạo - An Hải Bắc", QPointF(775, 270), "junction", "📍");
+    graph.addNode(121, "Ngô Quyền - An Hải Bắc (AH17)", QPointF(830, 270), "junction", "📍");
+    graph.addNode(122, "Chính Hữu - An Hải Bắc", QPointF(975, 270), "junction", "📍");
+    graph.addNode(123, "Hồ Nghinh - An Hải Bắc", QPointF(1015, 270), "junction", "📍");
+    graph.addNode(124, "Võ Nguyên Giáp - An Hải Bắc", QPointF(1085, 270), "beach", "🏖️");
+
+    // --- Tuyến đường NGUYỄN CÔNG TRỨ (Y = 330) ---
+    graph.addNode(125, "Trần Hưng Đạo - Nguyễn Công Trứ", QPointF(775, 330), "junction", "📍");
+    graph.addNode(126, "Ngô Quyền - Nguyễn Công Trứ (AH17)", QPointF(830, 330), "junction", "📍");
+    graph.addNode(127, "Phạm Cự Lượng - Nguyễn Công Trứ", QPointF(890, 330), "junction", "📍");
+    graph.addNode(128, "Nguyễn Thiện Kế - Nguyễn Công Trứ", QPointF(940, 330), "junction", "📍");
+    graph.addNode(129, "Chính Hữu - Nguyễn Công Trứ", QPointF(975, 330), "junction", "📍");
+    graph.addNode(130, "Hồ Nghinh - Nguyễn Công Trứ", QPointF(1015, 330), "junction", "📍");
+    graph.addNode(131, "Võ Nguyên Giáp - Nguyễn Công Trứ", QPointF(1085, 330), "beach", "🏖️");
+
+    // --- Tuyến VÕ VĂN KIỆT bổ sung (Y = 380) ---
+    graph.addNode(132, "Chính Hữu - Võ Văn Kiệt", QPointF(975, 380), "junction", "📍");
+
+    // --- Tuyến LÊ HỮU TRÁC bổ sung (Y = 460) ---
+    graph.addNode(133, "Ngô Quyền - Lê Hữu Trác (AH17)", QPointF(830, 460), "junction", "📍");
+    graph.addNode(134, "Phạm Cự Lượng - Lê Hữu Trác", QPointF(890, 460), "junction", "📍");
+
+    // --- Tuyến NGUYỄN DUY HIỆU (Y = 510) ---
+    graph.addNode(135, "Ngô Quyền - Nguyễn Duy Hiệu (AH17)", QPointF(830, 510), "junction", "📍");
+    graph.addNode(136, "Phạm Cự Lượng - Nguyễn Duy Hiệu", QPointF(890, 510), "junction", "📍");
+    graph.addNode(137, "Nguyễn Thiện Kế - Nguyễn Duy Hiệu", QPointF(940, 510), "junction", "📍");
+    graph.addNode(138, "Hà Bổng - Nguyễn Duy Hiệu", QPointF(1050, 510), "junction", "📍");
+    graph.addNode(139, "Võ Nguyên Giáp - Nguyễn Duy Hiệu", QPointF(1085, 510), "beach", "🏖️");
+
+    // --- Đại lộ NGUYỄN VĂN THOẠI (Y = 565) ---
+    graph.addNode(140, "Ngũ Hành Sơn - Nguyễn Văn Thoại (AH17)", QPointF(830, 565), "junction", "📍");
+    graph.addNode(141, "Phạm Cự Lượng - Nguyễn Văn Thoại", QPointF(890, 565), "junction", "📍");
+    graph.addNode(142, "Nguyễn Thiện Kế - Nguyễn Văn Thoại", QPointF(940, 565), "junction", "📍");
+    graph.addNode(143, "Hà Bổng - Nguyễn Văn Thoại", QPointF(1050, 565), "junction", "📍");
+
+    // --- Ven sông bờ Đông phía Nam: Đ. CHƯƠNG DƯƠNG (X = 765) ---
+    graph.addNode(144, "Chương Dương - Cầu Trần Thị Lý", QPointF(765, 610), "junction", "📍");
+    graph.addNode(145, "Chương Dương - Đỗ Bá", QPointF(765, 650), "junction", "📍");
+    graph.addNode(146, "Chương Dương - Dương Khuê", QPointF(765, 710), "junction", "📍");
+
+    // --- Tuyến ĐỖ BÁ & DƯƠNG KHUÊ kéo dài đến biển ---
+    graph.addNode(147, "Võ Nguyên Giáp - Đỗ Bá", QPointF(1085, 650), "beach", "🏖️");
+    graph.addNode(148, "Ngũ Hành Sơn - Dương Khuê (AH17)", QPointF(830, 710), "junction", "📍");
+    graph.addNode(149, "Châu Thị Vĩnh Tế - Dương Khuê", QPointF(940, 710), "junction", "📍");
+    graph.addNode(150, "Võ Nguyên Giáp - Dương Khuê", QPointF(1085, 710), "beach", "🏖️");
+
+    // --- Ven sông TRẦN HƯNG ĐẠO (đoạn giữa Cầu Rồng và Cầu Trần Thị Lý) ---
+    graph.addNode(151, "Trần Hưng Đạo - Mai Hắc Đế", QPointF(775, 430), "junction", "📍");
+    graph.addNode(152, "Trần Hưng Đạo - Hà Thị Thân", QPointF(775, 490), "junction", "📍");
+    graph.addNode(153, "Trần Hưng Đạo - Bùi Thị Xuân", QPointF(775, 550), "junction", "📍");
+
+    // --- Các nút trên trục PHẠM VĂN ĐỒNG bổ sung ---
+    graph.addNode(154, "Chính Hữu - Phạm Văn Đồng", QPointF(975, 150), "junction", "📍");
+    graph.addNode(155, "Hà Nghinh - Phạm Văn Đồng", QPointF(1050, 150), "junction", "📍");
+
+    // --- POIs / Địa danh nổi bật bờ Đông (clickable & routeable) ---
+    graph.addNode(156, "Tượng Cá Chép Hoá Rồng & Cầu Tình Yêu", QPointF(760, 350), "poi", "⛲");
+    graph.addNode(157, "Chợ Đêm Sơn Trà (Mai Hắc Đế)", QPointF(795, 430), "poi", "🏮");
+    graph.addNode(158, "Mộc Quán Seafood Đà Nẵng", QPointF(980, 365), "poi", "🦀");
+    graph.addNode(159, "Cửa Ngõ Café (Nguyễn Thiện Kế)", QPointF(955, 395), "poi", "☕");
+    graph.addNode(160, "Bếp Cuốn Đà Nẵng - Michelin Selected", QPointF(920, 435), "poi", "🥢");
+    graph.addNode(161, "B&B Bakery Đà Nẵng", QPointF(920, 475), "poi", "🥐");
+    graph.addNode(162, "Khách sạn Mường Thanh Luxury Đà Nẵng", QPointF(1070, 565), "poi", "🏨");
+    graph.addNode(163, "Bikini Bottom Express Đà Nẵng", QPointF(1070, 650), "poi", "🍹");
+    graph.addNode(164, "Công Viên Biển Đông (Quảng Trường Hòa Bình)", QPointF(1065, 130), "park", "🕊️");
+    graph.addNode(165, "Herbal Spa Đà Nẵng", QPointF(855, 270), "poi", "🌿");
+    graph.addNode(166, "Pizza 4P's Indochina Đà Nẵng", QPointF(795, 170), "poi", "🍕");
+    graph.addNode(167, "Four Points by Sheraton Danang", QPointF(1070, 80), "poi", "🏨");
 
     auto dist = [](QPointF a, QPointF b) {
       return std::hypot(a.x() - b.x(), a.y() - b.y());
@@ -2344,50 +2523,174 @@ private:
     connect(52, 56, 1.3, "Cầu Trần Thị Lý", true, true);
     connect(56, 62, 1.3, "Cầu Trần Thị Lý", true, true);
 
-    // --- CÁC ĐƯỜNG TRỤC BỜ ĐÔNG (SƠN TRÀ & NGŨ HÀNH SƠN) ---
-    // Trần Hưng Đạo (trục ven sông bờ Đông tại X = 775, KHÔNG đè lên sông)
+    // --- CÁC ĐƯỜNG TRỤC BỜ ĐÔNG (SƠN TRÀ & NGŨ HÀNH SƠN - MẠNG LƯỚI ĐÔ THỊ ĐẦY ĐỦ) ---
+    // 1. Tuyến ven sông Đ. Trần Hưng Đạo (X = 775)
+    connect(105, 109, 1.2, "Đ. Trần Hưng Đạo", false, true);
+    connect(109, 59, 1.2, "Đ. Trần Hưng Đạo", false, true);
     connect(59, 57, 1.2, "Đ. Trần Hưng Đạo", false, true);
-    connect(57, 61, 1.3, "Đ. Trần Hưng Đạo", false, true);
-    connect(61, 60, 1.4, "Đ. Trần Hưng Đạo", false, true);
-    connect(60, 62, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(57, 113, 1.2, "Đ. Trần Hưng Đạo", false, true);
+    connect(113, 120, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(120, 61, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(61, 125, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(125, 60, 1.4, "Đ. Trần Hưng Đạo", false, true);
+    connect(60, 151, 1.4, "Đ. Trần Hưng Đạo", false, true);
+    connect(151, 152, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(152, 153, 1.3, "Đ. Trần Hưng Đạo", false, true);
+    connect(153, 62, 1.3, "Đ. Trần Hưng Đạo", false, true);
 
-    // Phạm Văn Đồng
+    // 2. Tuyến ven sông phía Nam Đ. Chương Dương (X = 765)
+    connect(62, 144, 1.2, "Đ. Chương Dương", false, true);
+    connect(144, 145, 1.2, "Đ. Chương Dương", false, true);
+    connect(145, 146, 1.2, "Đ. Chương Dương", false, true);
+
+    // 3. Đại lộ Ngô Quyền (AH17) / Ngũ Hành Sơn (X = 830)
+    connect(106, 110, 1.2, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(110, 63, 1.3, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(63, 114, 1.3, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(114, 121, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(121, 126, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(126, 64, 1.5, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(64, 133, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(133, 135, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(135, 140, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
+    connect(140, 65, 1.3, "Đ. Ngũ Hành Sơn (AH17)", false, true);
+    connect(65, 78, 1.3, "Đ. Ngũ Hành Sơn (AH17)", false, true);
+    connect(78, 148, 1.2, "Đ. Ngũ Hành Sơn (AH17)", false, true);
+
+    // 4. Tuyến Đ. Phạm Cự Lượng (X = 890)
+    connect(108, 115, 1.2, "Đ. Phạm Cự Lượng", false, false);
+    connect(115, 67, 1.2, "Đ. Phạm Cự Lượng", false, false);
+    connect(67, 127, 1.2, "Đ. Phạm Cự Lượng", false, false);
+    connect(127, 66, 1.3, "Đ. Phạm Cự Lượng", false, false);
+    connect(66, 134, 1.2, "Đ. Phạm Cự Lượng", false, false);
+    connect(134, 136, 1.2, "Đ. Phạm Cự Lượng", false, false);
+    connect(136, 141, 1.2, "Đ. Phạm Cự Lượng", false, false);
+
+    // 5. Tuyến Đ. Nguyễn Thiện Kế & Đ. Châu Thị Vĩnh Tế (X = 940)
+    connect(128, 68, 1.2, "Đ. Nguyễn Thiện Kế", false, false);
+    connect(68, 69, 1.2, "Đ. Nguyễn Thiện Kế", false, false);
+    connect(69, 137, 1.2, "Đ. Nguyễn Thiện Kế", false, false);
+    connect(137, 142, 1.2, "Đ. Nguyễn Thiện Kế", false, false);
+    connect(142, 79, 1.2, "Đ. Châu Thị Vĩnh Tế", false, false);
+    connect(79, 149, 1.2, "Đ. Châu Thị Vĩnh Tế", false, false);
+
+    // 6. Tuyến Đ. Chính Hữu (X = 975)
+    connect(154, 116, 1.2, "Đ. Chính Hữu", false, false);
+    connect(116, 122, 1.2, "Đ. Chính Hữu", false, false);
+    connect(122, 129, 1.2, "Đ. Chính Hữu", false, false);
+    connect(129, 132, 1.2, "Đ. Chính Hữu", false, false);
+
+    // 7. Tuyến Đ. Hồ Nghinh (X = 1015)
+    connect(70, 117, 1.2, "Đ. Hồ Nghinh", false, false);
+    connect(117, 123, 1.2, "Đ. Hồ Nghinh", false, false);
+    connect(123, 130, 1.2, "Đ. Hồ Nghinh", false, false);
+    connect(130, 71, 1.2, "Đ. Hồ Nghinh", false, false);
+
+    // 8. Tuyến Đ. Hà Bổng / Hà Nghinh (X = 1050)
+    connect(155, 118, 1.2, "Đ. Hà Nghinh", false, false);
+    connect(118, 72, 1.2, "Đ. Hà Bổng", false, false);
+    connect(72, 73, 1.2, "Đ. Hà Bổng", false, false);
+    connect(73, 138, 1.2, "Đ. Hà Bổng", false, false);
+    connect(138, 143, 1.2, "Đ. Hà Bổng", false, false);
+
+    // 9. Đại lộ ven biển Võ Nguyên Giáp (X = 1085)
+    connect(167, 74, 1.2, "Đ. Võ Nguyên Giáp", false, true);
+    connect(74, 119, 1.2, "Đ. Võ Nguyên Giáp", false, true);
+    connect(119, 124, 1.2, "Đ. Võ Nguyên Giáp", false, true);
+    connect(124, 131, 1.2, "Đ. Võ Nguyên Giáp", false, true);
+    connect(131, 75, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    connect(75, 76, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    connect(76, 139, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    connect(139, 77, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    connect(77, 147, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    connect(147, 150, 1.2, "Đ. Võ Nguyên Giáp", false, true);
+
+    // 10. Đại lộ Phạm Văn Đồng (Y = 150)
     connect(57, 58, 1.2, "Đ. Phạm Văn Đồng", false, true);
     connect(58, 63, 1.3, "Đ. Phạm Văn Đồng", false, true);
-    connect(63, 70, 1.2, "Đ. Phạm Văn Đồng", false, true);
-    connect(70, 74, 1.1, "Đ. Phạm Văn Đồng", false, true);
+    connect(63, 108, 1.2, "Đ. Phạm Văn Đồng", false, true);
+    connect(108, 154, 1.2, "Đ. Phạm Văn Đồng", false, true);
+    connect(154, 70, 1.2, "Đ. Phạm Văn Đồng", false, true);
+    connect(70, 155, 1.2, "Đ. Phạm Văn Đồng", false, true);
+    connect(155, 74, 1.2, "Đ. Phạm Văn Đồng", false, true);
 
-    // Đại lộ Võ Văn Kiệt
+    // 11. Tuyến Đ. Morrison (Y = 210)
+    connect(113, 114, 1.2, "Đ. Morrison", false, false);
+    connect(114, 115, 1.2, "Đ. Morrison", false, false);
+    connect(115, 116, 1.2, "Đ. Morrison", false, false);
+    connect(116, 117, 1.2, "Đ. Morrison", false, false);
+    connect(117, 118, 1.2, "Đ. Morrison", false, false);
+    connect(118, 119, 1.2, "Đ. Morrison", false, false);
+
+    // 12. Tuyến Đ. An Hải Bắc (Y = 270)
+    connect(120, 121, 1.2, "Đ. An Hải Bắc", false, false);
+    connect(121, 67, 1.2, "Đ. An Hải Bắc", false, false);
+    connect(67, 122, 1.2, "Đ. An Hải Bắc", false, false);
+    connect(122, 123, 1.2, "Đ. An Hải Bắc", false, false);
+    connect(123, 124, 1.2, "Đ. An Hải Bắc", false, false);
+
+    // 13. Tuyến Đ. Nguyễn Công Trứ (Y = 330)
+    connect(125, 126, 1.3, "Đ. Nguyễn Công Trứ", false, false);
+    connect(126, 127, 1.3, "Đ. Nguyễn Công Trứ", false, false);
+    connect(127, 128, 1.3, "Đ. Nguyễn Công Trứ", false, false);
+    connect(128, 129, 1.3, "Đ. Nguyễn Công Trứ", false, false);
+    connect(129, 130, 1.3, "Đ. Nguyễn Công Trứ", false, false);
+    connect(130, 131, 1.2, "Đ. Nguyễn Công Trứ", false, false);
+
+    // 14. Đại lộ Võ Văn Kiệt (Y = 380)
     connect(60, 64, 1.4, "Đ. Võ Văn Kiệt", false, true);
     connect(64, 66, 1.5, "Đ. Võ Văn Kiệt", false, true);
     connect(66, 68, 1.4, "Đ. Võ Văn Kiệt", false, true);
-    connect(68, 71, 1.3, "Đ. Võ Văn Kiệt", false, true);
+    connect(68, 132, 1.3, "Đ. Võ Văn Kiệt", false, true);
+    connect(132, 71, 1.3, "Đ. Võ Văn Kiệt", false, true);
     connect(71, 72, 1.3, "Đ. Võ Văn Kiệt", false, true);
     connect(72, 75, 1.2, "Đ. Võ Văn Kiệt", false, true);
 
-    // Ngô Quyền (AH17)
-    connect(63, 64, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
-    connect(64, 65, 1.4, "Đ. Ngô Quyền (AH17)", false, true);
-    connect(65, 78, 1.3, "Đ. Ngũ Hành Sơn (AH17)", false, true);
-
-    // Trần Thị Lý Đông & Đỗ Bá
-    connect(62, 65, 1.3, "Đ. Trần Thị Lý Đông", false, true);
-    connect(78, 79, 1.2, "Đ. Đỗ Bá", false, false);
-    connect(79, 80, 1.2, "Đ. Đỗ Bá", false, false);
-    connect(80, 77, 1.2, "Đ. Nguyễn Văn Thoại", false, true);
-
-    // Đường nhánh bờ Đông
-    connect(66, 67, 1.2, "Đ. Phạm Cự Lượng", false, false);
-    connect(68, 69, 1.2, "Đ. Nguyễn Thiện Kế", false, false);
-    connect(70, 71, 1.2, "Đ. Hồ Nghinh", false, false);
-    connect(72, 73, 1.2, "Đ. Hà Bổng", false, false);
+    // 15. Tuyến Đ. Lê Hữu Trác (Y = 460)
+    connect(133, 134, 1.2, "Đ. Lê Hữu Trác", false, false);
+    connect(134, 69, 1.2, "Đ. Lê Hữu Trác", false, false);
     connect(69, 73, 1.2, "Đ. Lê Hữu Trác", false, false);
     connect(73, 76, 1.2, "Đ. Lê Hữu Trác", false, false);
 
-    // Đại lộ Võ Nguyên Giáp ven biển Mỹ Khê
-    connect(74, 75, 1.2, "Đ. Võ Nguyên Giáp", false, true);
-    connect(75, 76, 1.3, "Đ. Võ Nguyên Giáp", false, true);
-    connect(76, 77, 1.3, "Đ. Võ Nguyên Giáp", false, true);
+    // 16. Tuyến Đ. Nguyễn Duy Hiệu (Y = 510)
+    connect(135, 136, 1.2, "Đ. Nguyễn Duy Hiệu", false, false);
+    connect(136, 137, 1.2, "Đ. Nguyễn Duy Hiệu", false, false);
+    connect(137, 138, 1.2, "Đ. Nguyễn Duy Hiệu", false, false);
+    connect(138, 139, 1.2, "Đ. Nguyễn Duy Hiệu", false, false);
+
+    // 17. Đại lộ Nguyễn Văn Thoại (Y = 565)
+    connect(140, 141, 1.4, "Đ. Nguyễn Văn Thoại", false, true);
+    connect(141, 142, 1.4, "Đ. Nguyễn Văn Thoại", false, true);
+    connect(142, 143, 1.3, "Đ. Nguyễn Văn Thoại", false, true);
+    connect(143, 77, 1.3, "Đ. Nguyễn Văn Thoại", false, true);
+
+    // 18. Tuyến Đ. Trần Thị Lý Đông (Y = 610)
+    connect(62, 65, 1.3, "Đ. Trần Thị Lý Đông", false, true);
+
+    // 19. Tuyến Đ. Đỗ Bá (Y = 650)
+    connect(145, 78, 1.2, "Đ. Đỗ Bá", false, false);
+    connect(78, 79, 1.2, "Đ. Đỗ Bá", false, false);
+    connect(79, 80, 1.2, "Đ. Đỗ Bá", false, false);
+    connect(80, 147, 1.2, "Đ. Đỗ Bá", false, false);
+
+    // 20. Tuyến Đ. Dương Khuê (Y = 710)
+    connect(146, 148, 1.2, "Đ. Dương Khuê", false, false);
+    connect(148, 149, 1.2, "Đ. Dương Khuê", false, false);
+    connect(149, 150, 1.2, "Đ. Dương Khuê", false, false);
+
+    // 21. Kết nối các điểm du lịch & POI vào mạng lưới
+    connect(125, 156, 1.1, "Bến Du Thuyền DHC & Cầu Tình Yêu", false, false);
+    connect(151, 157, 1.3, "Chợ Đêm Sơn Trà", false, false);
+    connect(72, 158, 1.2, "Đ. Võ Văn Kiệt (Mộc Quán)", false, false);
+    connect(128, 159, 1.1, "Đ. Nguyễn Thiện Kế (Cửa Ngõ Café)", false, false);
+    connect(69, 160, 1.1, "Đ. Lê Hữu Trác (Bếp Cuốn Michelin)", false, false);
+    connect(69, 161, 1.1, "Đ. Lê Hữu Trác (B&B Bakery)", false, false);
+    connect(77, 162, 1.2, "Đ. Võ Nguyên Giáp (Mường Thanh)", false, false);
+    connect(147, 163, 1.2, "Đ. Võ Nguyên Giáp (Bikini Bottom)", false, false);
+    connect(74, 164, 1.1, "Công Viên Biển Đông", false, false);
+    connect(121, 165, 1.2, "Herbal Spa", false, false);
+    connect(58, 166, 1.2, "Pizza 4P's Indochina", false, false);
+    connect(74, 167, 1.2, "Four Points by Sheraton", false, false);
 
     // --- CÁC KẾT NỐI BỔ SUNG CHO NODES 93-112 ---
     // Nguyễn Tất Thành bổ sung (node 93 giữa 17 và 87)
@@ -2424,23 +2727,13 @@ private:
     connect(39, 104, 1.3, "Đ. Quang Trung", false, true);    // Trần Phú → Quang Trung
     connect(32, 104, 1.2, "Đ. Quang Trung", false, true);    // Lê Lợi → Quang Trung
 
-    // Bờ Đông phía Bắc (Như Nguyệt → Phạm Văn Đồng)
-    connect(88, 105, 1.2, "Đ. Như Nguyệt / Phạm Văn Đồng", false, true); // NTT→Phía Đông
-    connect(105, 109, 1.2, "Đ. Trần Hưng Đạo", false, true);
-    connect(109, 59, 1.2, "Đ. Trần Hưng Đạo", false, true);
+    // Nối đường Như Nguyệt qua bờ Đông phía Bắc
+    connect(88, 105, 1.2, "Đ. Như Nguyệt - Phạm Văn Đồng", false, true);
     connect(105, 106, 1.2, "Đ. Phạm Văn Đồng", false, true);
-    connect(106, 110, 1.2, "Đ. Ngô Quyền", false, true);
-    connect(110, 63, 1.2, "Đ. Ngô Quyền", false, true);
     connect(106, 107, 1.2, "Đ. Phạm Văn Đồng", false, true);
-    connect(107, 108, 1.2, "Đ. Phạm Văn Đồng / An Hải", false, false);
-    connect(108, 67, 1.2, "Đ. An Hải Bắc", false, false);
-    connect(110, 58, 1.2, "Đ. Phạm Văn Đồng", false, true);
-
-    // Nguyễn Văn Thoại (Ngũ Hành Sơn → Mỹ Khê)
+    connect(107, 108, 1.2, "Đ. Phạm Văn Đồng", false, false);
     connect(80, 111, 1.2, "Đ. Nguyễn Văn Thoại", false, false);
     connect(111, 77, 1.2, "Đ. Nguyễn Văn Thoại", false, true);
-    connect(77, 112, 1.2, "Đ. Võ Nguyên Giáp / Mỹ Khê", false, true);
-    connect(112, 75, 1.2, "Đ. Võ Nguyên Giáp", false, true);
   }
 
   // ==================== VẼ BẢN ĐỒ CHI TIẾT (ĐỊA HÌNH, SÔNG, BIỂN, ĐƯỜNG XÃ) ====================
@@ -2495,8 +2788,83 @@ private:
     bayText->setPos(100, -25);
     bayText->setZValue(-26);
 
-    // 3. KHU VỰC ĐÔ THỊ BỜ ĐÔNG (QUẬN SƠN TRÀ & NGŨ HÀNH SƠN - ĐỒNG BẰNG ĐÔ THỊ)
-    // Thực tế bản đồ trung tâm Đà Nẵng là khu phố bàn cờ bằng phẳng, tiếp giáp biển Mỹ Khê ở phía Đông
+    // 3. KHU VỰC ĐÔ THỊ BỜ ĐÔNG (QUẬN SƠN TRÀ & NGŨ HÀNH SƠN - CÁC KHỐI PHỐ BÀN CỜ)
+    auto addUrbanBlock = [&](double bx, double by, double bw, double bh) {
+      QPainterPath p;
+      p.addRoundedRect(QRectF(bx, by, bw, bh), 3, 3);
+      QColor blockFill = darkMode ? QColor(36, 38, 48) : QColor(235, 232, 225);
+      QColor blockBdr  = darkMode ? QColor(48, 50, 62) : QColor(224, 220, 212);
+      auto *item = scene->addPath(p, QPen(blockBdr, 0.8), QBrush(blockFill));
+      item->setZValue(-24);
+    };
+
+    // Khối phố giữa Phạm Văn Đồng (150) và Morrison (210)
+    addUrbanBlock(838, 158, 44, 44);
+    addUrbanBlock(898, 158, 69, 44);
+    addUrbanBlock(983, 158, 24, 44);
+    addUrbanBlock(1023, 158, 21, 44);
+    addUrbanBlock(1058, 158, 21, 44);
+
+    // Khối phố giữa Morrison (210) và An Hải Bắc (270)
+    addUrbanBlock(783, 218, 39, 44);
+    addUrbanBlock(838, 218, 44, 44);
+    addUrbanBlock(898, 218, 69, 44);
+    addUrbanBlock(983, 218, 24, 44);
+    addUrbanBlock(1023, 218, 21, 44);
+    addUrbanBlock(1058, 218, 21, 44);
+
+    // Khối phố giữa An Hải Bắc (270) và Nguyễn Công Trứ (330)
+    addUrbanBlock(783, 278, 39, 44);
+    addUrbanBlock(838, 278, 44, 44);
+    addUrbanBlock(898, 278, 34, 44);
+    addUrbanBlock(948, 278, 19, 44);
+    addUrbanBlock(983, 278, 24, 44);
+    addUrbanBlock(1023, 278, 54, 44);
+
+    // Khối phố giữa Nguyễn Công Trứ (330) và Võ Văn Kiệt (380)
+    addUrbanBlock(783, 338, 39, 34);
+    addUrbanBlock(838, 338, 44, 34);
+    addUrbanBlock(898, 338, 34, 34);
+    addUrbanBlock(948, 338, 19, 34);
+    addUrbanBlock(983, 338, 24, 34);
+    addUrbanBlock(1023, 338, 54, 34);
+
+    // Khối phố giữa Võ Văn Kiệt (380) và Lê Hữu Trác (460)
+    addUrbanBlock(783, 388, 39, 64);
+    addUrbanBlock(838, 388, 44, 64);
+    addUrbanBlock(898, 388, 34, 64);
+    addUrbanBlock(948, 388, 94, 64);
+    addUrbanBlock(1058, 388, 21, 64);
+
+    // Khối phố giữa Lê Hữu Trác (460) và Nguyễn Duy Hiệu (510)
+    addUrbanBlock(783, 468, 39, 34);
+    addUrbanBlock(838, 468, 44, 34);
+    addUrbanBlock(898, 468, 34, 34);
+    addUrbanBlock(948, 468, 94, 34);
+    addUrbanBlock(1058, 468, 21, 34);
+
+    // Khối phố giữa Nguyễn Duy Hiệu (510) và Nguyễn Văn Thoại (565)
+    addUrbanBlock(783, 518, 39, 39);
+    addUrbanBlock(838, 518, 44, 39);
+    addUrbanBlock(898, 518, 34, 39);
+    addUrbanBlock(948, 518, 94, 39);
+    addUrbanBlock(1058, 518, 21, 39);
+
+    // Khối phố Bắc Mỹ Phú: Nam Nguyễn Văn Thoại (565) đến Đỗ Bá (650) & Dương Khuê (710)
+    addUrbanBlock(838, 575, 94, 65);
+    addUrbanBlock(948, 575, 129, 65);
+    addUrbanBlock(773, 658, 49, 44);
+    addUrbanBlock(838, 658, 94, 44);
+    addUrbanBlock(948, 658, 129, 44);
+
+    // Dải công viên xanh ven sông bờ Đông (Trần Hưng Đạo & Chương Dương)
+    QColor parkC = darkMode ? QColor(26, 52, 34) : QColor(204, 235, 205);
+    auto *eastRiverPark1 = scene->addRect(764, 160, 8, 200, QPen(Qt::NoPen), QBrush(parkC));
+    eastRiverPark1->setZValue(-23);
+    auto *eastRiverPark2 = scene->addRect(764, 395, 8, 205, QPen(Qt::NoPen), QBrush(parkC));
+    eastRiverPark2->setZValue(-23);
+    auto *chuongDuongPark = scene->addRect(756, 615, 7, 95, QPen(Qt::NoPen), QBrush(parkC));
+    chuongDuongPark->setZValue(-23);
 
     // 4. SÔNG HÀN — Hai bờ uốn lượn theo thực tế Google Maps
     // Tạo vùng khép kín cho sông (bờ Tây x≈660-680, bờ Đông x≈760-780)
@@ -2803,6 +3171,49 @@ private:
       }
     }
 
+    // 8.E. BẾN DU THUYỀN DHC MARINA, CẦU TÌNH YÊU & TƯỢNG CÁ CHÉP HOÁ RỒNG
+    QPainterPath pierPath;
+    pierPath.addRoundedRect(QRectF(744, 342, 28, 18), 3, 3);
+    auto *pierItem = scene->addPath(pierPath, QPen(QColor(160, 140, 120), 1),
+                                    QBrush(darkMode ? QColor(60, 55, 50) : QColor(230, 215, 200)));
+    pierItem->setZValue(-2);
+
+    for (int hx = 747; hx <= 766; hx += 7) {
+      auto *heart = scene->addText("❤️");
+      heart->setFont(QFont("Segoe UI", 6));
+      heart->setPos(hx, 339);
+      heart->setZValue(-1);
+    }
+    auto *carpText = scene->addText("⛲");
+    carpText->setFont(QFont("Segoe UI", 9));
+    carpText->setPos(736, 343);
+    carpText->setZValue(-1);
+
+    // 8.F. CÔNG VIÊN BIỂN ĐÔNG (EAST SEA PARK) VÀ QUẢNG TRƯỜNG HÒA BÌNH
+    QPainterPath eastSeaPark;
+    eastSeaPark.addRoundedRect(QRectF(1048, 112, 34, 32), 6, 6);
+    auto *espItem = scene->addPath(eastSeaPark, QPen(Qt::NoPen), QBrush(parkC));
+    espItem->setZValue(-22);
+
+    auto *dove1 = scene->addText("🕊️");
+    dove1->setFont(QFont("Segoe UI", 8));
+    dove1->setPos(1054, 116);
+    dove1->setZValue(-21);
+
+    // 8.G. RẶNG DỪA & CHÒI NGHỈ VEN BÃI BIỂN MỸ KHÊ
+    for (int py = 90; py <= 690; py += 75) {
+      auto *palm = scene->addText("🌴");
+      palm->setFont(QFont("Segoe UI", 8));
+      palm->setPos(1074, py);
+      palm->setZValue(-26);
+    }
+    for (int uy = 130; uy <= 670; uy += 90) {
+      auto *umb = scene->addText("⛱️");
+      umb->setFont(QFont("Segoe UI", 7));
+      umb->setPos(1088, uy);
+      umb->setZValue(-26);
+    }
+
     // 9. NÚT GIAO LỘ (JUNCTION DOTS)
     for (const Node &n : graph.nodes) {
       QColor dotC = darkMode ? QColor(105, 100, 92) : QColor(185, 178, 165);
@@ -2822,6 +3233,7 @@ private:
       QPointF offset;
     };
     QVector<LandmarkItem> pois = {
+      // Bờ Tây & Trung tâm
       {"Cảng hàng không quốc tế Đà Nẵng", "✈️", QPointF(90, 520), QColor(26, 115, 232), QPointF(-40, 14)},
       {"Ga Đà Nẵng", "🚆", QPointF(370, 180), QColor(0, 137, 123), QPointF(10, -7)},
       {"Hồ Công viên 29/3", "🌳", QPointF(265, 340), QColor(46, 125, 50), QPointF(10, -7)},
@@ -2830,13 +3242,29 @@ private:
       {"Chợ Cồn", "🛍️", QPointF(450, 275), QColor(230, 81, 0), QPointF(10, -7)},
       {"Chợ Hàn", "🛍️", QPointF(610, 275), QColor(230, 81, 0), QPointF(10, -7)},
       {"Giáo Xứ Chính Toà Đà Nẵng", "⛪", QPointF(610, 320), QColor(94, 53, 177), QPointF(10, -8)},
-      {"Vincom Plaza Đà Nẵng", "🛍️", QPointF(800, 150), QColor(230, 81, 0), QPointF(10, -7)},
       {"Công Viên APEC", "🌳", QPointF(625, 410), QColor(46, 125, 50), QPointF(10, 8)},
-      {"Bãi biển Mỹ Khê", "🏖️", QPointF(1085, 380), QColor(0, 151, 167), QPointF(-100, -7)},
       {"Cầu Thuận Phước", "🌉", QPointF(716, 8), QColor(30, 136, 229), QPointF(-36, -20)},
       {"Cầu Sông Hàn", "🌉", QPointF(718, 145), QColor(245, 124, 0), QPointF(-32, -18)},
       {"Cầu Rồng", "🐉", QPointF(715, 375), QColor(245, 124, 0), QPointF(-26, -18)},
       {"Cầu Trần Thị Lý", "🌉", QPointF(710, 610), QColor(244, 81, 30), QPointF(-36, -18)},
+
+      // Bờ Đông (Sơn Trà & Ngũ Hành Sơn - Nhà hàng, Khách sạn, Du lịch)
+      {"Vincom Plaza Đà Nẵng", "🛍️", QPointF(800, 140), QColor(230, 81, 0), QPointF(10, -18)},
+      {"Pizza 4P's Indochina", "🍕", QPointF(795, 172), QColor(230, 81, 0), QPointF(10, -7)},
+      {"Herbal Spa", "🌿", QPointF(855, 270), QColor(46, 125, 50), QPointF(10, -7)},
+      {"Tượng Cá Chép Hóa Rồng & Cầu Tình Yêu", "⛲", QPointF(758, 350), QColor(233, 30, 99), QPointF(-140, -7)},
+      {"Chợ Đêm Sơn Trà", "🏮", QPointF(795, 430), QColor(230, 81, 0), QPointF(10, -7)},
+      {"Mộc Quán Seafood Đà Nẵng", "🦀", QPointF(980, 365), QColor(230, 81, 0), QPointF(-110, -18)},
+      {"Cửa Ngõ Café", "☕", QPointF(955, 395), QColor(141, 110, 99), QPointF(10, -7)},
+      {"Bếp Cuốn Đà Nẵng - Michelin", "🥢", QPointF(920, 435), QColor(198, 40, 40), QPointF(10, -7)},
+      {"B&B Bakery - Đà Nẵng", "🥐", QPointF(920, 475), QColor(239, 108, 0), QPointF(10, -7)},
+      {"Khách sạn Mường Thanh Luxury", "🏨", QPointF(1070, 565), QColor(94, 53, 177), QPointF(-140, -16)},
+      {"Four Points by Sheraton", "🏨", QPointF(1070, 80), QColor(94, 53, 177), QPointF(-115, -7)},
+      {"Bikini Bottom Express", "🍹", QPointF(1070, 650), QColor(0, 151, 167), QPointF(-105, 8)},
+      {"Maia Beach Bar", "🏖️", QPointF(1105, 610), QColor(0, 151, 167), QPointF(10, -7)},
+      {"Công Viên Biển Đông", "🕊️", QPointF(1065, 130), QColor(46, 125, 50), QPointF(-110, -7)},
+      {"Bãi tắm Phạm Văn Đồng", "🏖️", QPointF(1085, 155), QColor(0, 151, 167), QPointF(10, -7)},
+      {"Bãi Biển Mỹ Khê", "🏖️", QPointF(1085, 380), QColor(0, 151, 167), QPointF(10, -7)}
     };
     for (const auto &pi : pois) {
       auto *badge = scene->addEllipse(pi.pos.x() - 6.5, pi.pos.y() - 6.5, 13, 13,
@@ -2896,30 +3324,6 @@ private:
       {"Nguyễn Văn Linh", QPointF(380, 432), 0.0, true},
       {"Đ. 2 Tháng 9", QPointF(615, 530), 90.0, true},
       {"Trần Thị Lý", QPointF(560, 602), 0.0, true},
-
-      // Bờ Đông
-      {"Đ. Trần Hưng Đạo", QPointF(755, 260), 90.0, true},
-      {"Đ. Trần Hưng Đạo", QPointF(758, 480), 90.0, true},
-      {"Võ Văn Kiệt", QPointF(815, 372), 0.0, true},
-      {"AH17", QPointF(820, 260), 90.0, true},
-      {"Phạm Cự Lượng", QPointF(880, 330), 90.0, false},
-      {"Nguyễn Thiện Kế", QPointF(930, 330), 90.0, false},
-      {"Lê Hữu Trác", QPointF(870, 452), 0.0, false},
-      {"Chính Hữu", QPointF(965, 210), 90.0, false},
-      {"Morrison", QPointF(945, 175), 0.0, false},
-      {"Hồ Nghinh", QPointF(1000, 260), 90.0, false},
-      {"Võ Nguyên Giáp", QPointF(1075, 260), 90.0, true},
-      {"Trần Thị Lý", QPointF(780, 602), 0.0, true},
-      {"Đỗ Bá", QPointF(890, 632), 0.0, false},
-      {"Dương Khuê", QPointF(765, 632), 0.0, false},
-
-      // Đường bổ sung bờ Đông
-      {"Phạm Văn Đồng", QPointF(830, -18), 0.0, true},
-      {"Trần Hưng Đạo", QPointF(757, 35), 90.0, true},
-      {"Ngô Quyền", QPointF(820, 35), 90.0, true},
-      {"An Hải Bắc", QPointF(880, 100), 90.0, false},
-
-      // Tuyến đường khác
       {"Quang Trung", QPointF(560, 72), 0.0, false},
       {"Xô Viết Nghệ Tĩnh", QPointF(350, 235), 90.0, true},
       {"Nguyễn Hữu Dật", QPointF(295, 252), 90.0, false},
@@ -2927,7 +3331,42 @@ private:
       {"Nguyễn Tất Thành", QPointF(435, 8), -5.0, true},
       {"Như Nguyệt", QPointF(645, 5), 0.0, false},
       {"Hà Huy Tập", QPointF(50, 325), 90.0, false},
-      {"Nguyễn Văn Thoại", QPointF(1000, 632), 0.0, false}
+
+      // Bờ Đông (Sơn Trà & Ngũ Hành Sơn - Mạng lưới hoàn chỉnh)
+      {"Đ. Trần Hưng Đạo", QPointF(755, 230), 90.0, true},
+      {"Đ. Trần Hưng Đạo", QPointF(755, 480), 90.0, true},
+      {"Ngô Quyền", QPointF(815, 95), 90.0, true},
+      {"Ngô Quyền (AH17)", QPointF(815, 330), 90.0, true},
+      {"Ngũ Hành Sơn", QPointF(815, 660), 90.0, true},
+      {"Phạm Văn Đồng", QPointF(885, 138), 0.0, true},
+      {"Morrison", QPointF(920, 202), 0.0, false},
+      {"An Hải Bắc", QPointF(950, 262), 0.0, false},
+      {"Nguyễn Công Trứ", QPointF(840, 322), 0.0, false},
+      {"Nguyễn Công Trứ", QPointF(1020, 322), 0.0, false},
+      {"Võ Văn Kiệt", QPointF(835, 372), 0.0, true},
+      {"Võ Văn Kiệt", QPointF(980, 372), 0.0, true},
+      {"Phạm Cự Lượng", QPointF(876, 235), 90.0, false},
+      {"Phạm Cự Lượng", QPointF(876, 490), 90.0, false},
+      {"Nguyễn Thiện Kế", QPointF(926, 350), 90.0, false},
+      {"Nguyễn Thiện Kế", QPointF(926, 490), 90.0, false},
+      {"Chính Hữu", QPointF(961, 235), 90.0, false},
+      {"Chính Hữu", QPointF(961, 350), 90.0, false},
+      {"Hồ Nghinh", QPointF(1001, 235), 90.0, false},
+      {"Hồ Nghinh", QPointF(1001, 350), 90.0, false},
+      {"Hà Bổng", QPointF(1036, 420), 90.0, false},
+      {"Hà Nghinh", QPointF(1036, 235), 90.0, false},
+      {"Lê Hữu Trác", QPointF(870, 452), 0.0, false},
+      {"Nguyễn Duy Hiệu", QPointF(860, 502), 0.0, false},
+      {"Nguyễn Văn Thoại", QPointF(850, 557), 0.0, true},
+      {"Trần Thị Lý", QPointF(780, 602), 0.0, true},
+      {"Chương Dương", QPointF(748, 660), 90.0, false},
+      {"Châu Thị Vĩnh Tế", QPointF(926, 620), 90.0, false},
+      {"Đỗ Bá", QPointF(860, 642), 0.0, false},
+      {"Dương Khuê", QPointF(790, 702), 0.0, false},
+      {"Dương Khuê", QPointF(990, 702), 0.0, false},
+      {"Võ Nguyên Giáp", QPointF(1073, 235), 90.0, true},
+      {"Võ Nguyên Giáp", QPointF(1073, 490), 90.0, true},
+      {"Võ Nguyên Giáp", QPointF(1073, 670), 90.0, true}
     };
     for (const auto &sl : streetLabels) {
       auto *st = scene->addText(sl.name);
@@ -2941,6 +3380,27 @@ private:
       st->setZValue(7);
       streetLabelGroup->addToGroup(st);
     }
+
+    // Biển số hiệu Quốc lộ AH17 (Highway Shield badges)
+    auto drawShieldAH17 = [&](double sx, double sy) {
+      QPainterPath sp;
+      sp.addRoundedRect(QRectF(sx - 13, sy - 7, 26, 14), 3, 3);
+      auto *bg = scene->addPath(sp,
+                                QPen(darkMode ? QColor(80, 85, 95) : QColor(90, 95, 105), 1),
+                                QBrush(darkMode ? QColor(40, 44, 52) : Qt::white));
+      bg->setZValue(6);
+      auto *t = scene->addText("AH17");
+      QFont hf("Segoe UI", 6, QFont::Bold);
+      t->setFont(hf);
+      t->setDefaultTextColor(darkMode ? QColor(220, 225, 235) : QColor(32, 33, 36));
+      t->setPos(sx - 12, sy - 9);
+      t->setZValue(7);
+      streetLabelGroup->addToGroup(bg);
+      streetLabelGroup->addToGroup(t);
+    };
+    drawShieldAH17(830, 240);
+    drawShieldAH17(830, 480);
+
     streetLabelGroup->setVisible(showStreetLabelsLayer);
 
     // 12. TÊN PHƯỜNG & KHU VỰC
@@ -2951,10 +3411,12 @@ private:
     QVector<DistrictLabel> distLabels = {
       {"THANH KHÊ", QPointF(35, 235)},
       {"PHÚ GIA", QPointF(350, 90)},
-      {"AN HẢI", QPointF(710, 305)},
+      {"AN HẢI", QPointF(710, 315)},
+      {"AN HẢI BẮC", QPointF(920, 115)},
       {"HÒA CƯƠNG", QPointF(475, 665)},
       {"BẮC MỸ PHÚ", QPointF(855, 665)},
-      {"KHU DU LỊCH VEN BIỂN", QPointF(995, 305)}
+      {"KHU NHÀ HÀNG VEN BIỂN", QPointF(1005, 335)},
+      {"BÃI BIỂN MỸ KHÊ", QPointF(1020, 490)}
     };
     for (const auto &dl : distLabels) {
       auto *dt = scene->addText(dl.name);
@@ -3020,6 +3482,7 @@ private:
 
     updateFloatingControlTheme();
     updateFloatingSearchBarTheme();
+    updateFloatingCategoryBarTheme();
     updateFloatingRouteBannerTheme();
     updateFloatingTrafficTheme();
 
@@ -4752,5 +5215,18 @@ int main(int argc, char *argv[]) {
   QApplication app(argc, argv);
   MainWindow w;
   w.show();
+
+  for (int i = 1; i < argc; ++i) {
+    if (QString(argv[i]) == "--screenshot" && i + 1 < argc) {
+      QString outFn = argv[i + 1];
+      QTimer::singleShot(800, [&w, outFn]() {
+        QPixmap pix = w.grab();
+        pix.save(outFn);
+        QCoreApplication::quit();
+      });
+      break;
+    }
+  }
+
   return app.exec();
 }

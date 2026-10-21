@@ -4,6 +4,7 @@ Makefile
 Makefile.*
 debug/
 release/
+build/
 *.user
 
 # Build outputs and generated sources
